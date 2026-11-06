@@ -6,9 +6,18 @@ from typing import Any
 
 import pytest
 
-from specsmith.domain.errors import ExtractionFailedError, ExtractionTimeoutError
+from specsmith.domain.errors import (
+    ExtractionFailedError,
+    ExtractionTimeoutError,
+    ExtractionUpstreamError,
+)
 from specsmith.domain.models import ExtractionMeta, Spec
-from specsmith.llm.base import LLMError, LLMResponse, LLMTimeoutError
+from specsmith.llm.base import (
+    LLMError,
+    LLMResponse,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from specsmith.llm.fake import FAKE_MODEL, FakeProvider, ScriptedItem
 from specsmith.llm.prompts import load_prompt
 from specsmith.services import extraction
@@ -377,9 +386,21 @@ def test_other_provider_failure_is_not_retried() -> None:
     assert exc_info.value.meta.attempts == 1
 
 
-def test_timeout_is_not_reported_as_a_plain_failure() -> None:
-    # The API maps them to different statuses (504 vs 422).
-    assert not issubclass(ExtractionTimeoutError, ExtractionFailedError)
+def test_unavailable_provider_is_an_upstream_error_not_retried() -> None:
+    svc, provider = service(LLMUnavailableError("returned 529"), as_json())
+
+    with pytest.raises(ExtractionUpstreamError, match="returned 529") as exc_info:
+        svc.extract(RAW_TEXT)
+
+    assert len(provider.calls) == 1
+    assert exc_info.value.meta.attempts == 1
+
+
+def test_error_kinds_stay_distinct() -> None:
+    # The API maps them to different statuses (422, 504, 502).
+    kinds = [ExtractionFailedError, ExtractionTimeoutError, ExtractionUpstreamError]
+    for kind in kinds:
+        assert [k for k in kinds if issubclass(kind, k)] == [kind]
 
 
 # --- the schema sent to the model (decision B) -----------------------------

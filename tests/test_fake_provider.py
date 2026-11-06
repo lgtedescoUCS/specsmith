@@ -85,6 +85,15 @@ def test_every_call_is_recorded_including_failures() -> None:
     ]
 
 
+def test_queue_appends_after_the_initial_responses() -> None:
+    provider = FakeProvider(["first"])
+    provider.queue("second", "third")
+
+    contents = [provider.extract("p", SCHEMA).content for _ in range(3)]
+
+    assert contents == ["first", "second", "third"]
+
+
 def test_running_out_of_responses_fails_loudly() -> None:
     provider = FakeProvider(["{}"])
     provider.extract("prompt", SCHEMA)

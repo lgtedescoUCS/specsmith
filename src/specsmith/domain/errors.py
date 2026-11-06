@@ -41,3 +41,14 @@ class ExtractionFailedError(ExtractionError):
 
 class ExtractionTimeoutError(ExtractionError):
     """The model did not answer within the configured timeout."""
+
+
+class ExtractionUpstreamError(ExtractionError):
+    """The LLM provider was unreachable or rejected the call."""
+
+
+class LLMNotConfiguredError(DomainError):
+    """No LLM provider credentials are configured on this server."""
+
+    def __init__(self) -> None:
+        super().__init__("LLM provider is not configured")

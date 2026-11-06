@@ -9,9 +9,18 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from specsmith.domain.errors import ExtractionFailedError, ExtractionTimeoutError
+from specsmith.domain.errors import (
+    ExtractionFailedError,
+    ExtractionTimeoutError,
+    ExtractionUpstreamError,
+)
 from specsmith.domain.models import ExtractionMeta, Spec
-from specsmith.llm.base import LLMError, LLMProvider, LLMTimeoutError
+from specsmith.llm.base import (
+    LLMError,
+    LLMProvider,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from specsmith.llm.prompts import Prompt
 from specsmith.services.spec_draft import SPEC_DRAFT_SCHEMA, parse_spec
 
@@ -33,8 +42,9 @@ class ExtractionService:
         self._max_retries = max_retries
 
     def extract(self, raw_text: str) -> ExtractionResult:
-        """Raises ExtractionFailedError or ExtractionTimeoutError, each
-        carrying the metadata of the attempts made."""
+        """Raises ExtractionFailedError, ExtractionTimeoutError or
+        ExtractionUpstreamError, each carrying the metadata of the attempts
+        made."""
         prompt = self._prompt.render(raw_text)
         model = self._provider.model
         input_tokens = output_tokens = attempts = 0
@@ -59,6 +69,10 @@ class ExtractionService:
             # provider concern (phase 4).
             except LLMTimeoutError as exc:
                 raise ExtractionTimeoutError(f"LLM timed out: {exc}", meta()) from exc
+            except LLMUnavailableError as exc:
+                raise ExtractionUpstreamError(
+                    f"LLM unavailable: {exc}", meta()
+                ) from exc
             except LLMError as exc:
                 raise ExtractionFailedError(f"LLM failed: {exc}", meta()) from exc
 

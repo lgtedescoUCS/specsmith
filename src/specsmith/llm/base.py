@@ -34,8 +34,10 @@ class LLMProvider(Protocol):
     def extract(self, prompt: str, schema: dict[str, Any]) -> LLMResponse:
         """Ask the model for output conforming to the JSON `schema`.
 
-        Raises LLMTimeoutError when the model does not answer in time and
-        LLMError for any other failure that a retry would not fix.
+        Raises LLMTimeoutError when the model does not answer in time,
+        LLMUnavailableError when the provider cannot be reached or returns
+        an error status, and LLMError when the model answered but the answer
+        is unusable (refused, cut off, empty).
         """
         ...
 
@@ -46,3 +48,9 @@ class LLMError(Exception):
 
 class LLMTimeoutError(LLMError):
     """The provider did not answer within the configured timeout."""
+
+
+class LLMUnavailableError(LLMError):
+    """The provider could not be reached or rejected the call (auth, rate
+    limit, server error). A failure of the upstream service, not of the
+    model's answer to this requirement."""

@@ -12,7 +12,12 @@ from typing import Any
 
 import anthropic
 
-from specsmith.llm.base import LLMError, LLMResponse, LLMTimeoutError
+from specsmith.llm.base import (
+    LLMError,
+    LLMResponse,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 
 # Non-streaming requests stay well under the SDK's HTTP timeout at this
 # size, and it leaves room for thinking plus a spec-sized JSON answer.
@@ -69,11 +74,13 @@ class AnthropicProvider:
         except anthropic.APITimeoutError as exc:
             raise LLMTimeoutError(f"Anthropic API timed out: {exc}") from exc
         except anthropic.APIStatusError as exc:
-            raise LLMError(
+            raise LLMUnavailableError(
                 f"Anthropic API returned {exc.status_code}: {exc.message}"
             ) from exc
         except anthropic.APIConnectionError as exc:
-            raise LLMError(f"Could not reach the Anthropic API: {exc}") from exc
+            raise LLMUnavailableError(
+                f"Could not reach the Anthropic API: {exc}"
+            ) from exc
 
         # Both stop reasons void the schema guarantee, and retrying the same
         # request would most likely end the same way, so neither is retried.

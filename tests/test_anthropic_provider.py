@@ -14,7 +14,12 @@ import httpx2
 import pytest
 
 from specsmith.llm.anthropic import DEFAULT_MAX_TOKENS, AnthropicProvider
-from specsmith.llm.base import LLMError, LLMResponse, LLMTimeoutError
+from specsmith.llm.base import (
+    LLMError,
+    LLMResponse,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from specsmith.services.spec_draft import SPEC_DRAFT_SCHEMA
 
 MODEL = "claude-sonnet-5-5"
@@ -173,7 +178,8 @@ def test_unusable_responses_are_llm_errors(
     with pytest.raises(LLMError, match=message) as exc_info:
         provider.extract("p", SPEC_DRAFT_SCHEMA)
 
-    assert not isinstance(exc_info.value, LLMTimeoutError)
+    # The model answered: this is about its answer, not the upstream service.
+    assert not isinstance(exc_info.value, (LLMTimeoutError, LLMUnavailableError))
 
 
 # --- errors ----------------------------------------------------------------
@@ -191,13 +197,13 @@ def test_timeout_becomes_llm_timeout_error() -> None:
     assert len(requests) == 1
 
 
-def test_connection_failure_is_an_llm_error_not_a_timeout() -> None:
+def test_connection_failure_is_unavailable_not_a_timeout() -> None:
     def unreachable(request: httpx2.Request) -> httpx2.Response:
         raise httpx2.ConnectError("connection refused", request=request)
 
     provider, _ = provider_with(unreachable)
 
-    with pytest.raises(LLMError, match="Could not reach") as exc_info:
+    with pytest.raises(LLMUnavailableError, match="Could not reach") as exc_info:
         provider.extract("p", SPEC_DRAFT_SCHEMA)
 
     assert not isinstance(exc_info.value, LLMTimeoutError)
@@ -213,10 +219,12 @@ def test_connection_failure_is_an_llm_error_not_a_timeout() -> None:
         (529, "overloaded_error"),
     ],
 )
-def test_api_errors_become_llm_errors(status: int, error_type: str) -> None:
+def test_api_errors_mean_the_provider_is_unavailable(
+    status: int, error_type: str
+) -> None:
     provider, requests = provider_with(api_error(status, error_type, "nope"))
 
-    with pytest.raises(LLMError, match=f"returned {status}"):
+    with pytest.raises(LLMUnavailableError, match=f"returned {status}"):
         provider.extract("p", SPEC_DRAFT_SCHEMA)
 
     assert len(requests) == 1

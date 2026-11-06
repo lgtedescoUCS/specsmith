@@ -46,6 +46,11 @@ class FakeProvider:
         self._output_tokens = output_tokens
         self.calls: list[FakeCall] = []
 
+    def queue(self, *items: ScriptedItem) -> None:
+        """Script more answers, for fakes built before the test knows them
+        (such as the one the test suite injects into the app)."""
+        self._responses.extend(items)
+
     def extract(self, prompt: str, schema: dict[str, Any]) -> LLMResponse:
         self.calls.append(FakeCall(prompt=prompt, schema=schema))
         if not self._responses:
