@@ -8,8 +8,11 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
+    Integer,
     MetaData,
     SmallInteger,
     String,
@@ -106,3 +109,50 @@ class OpenQuestionRow(Base):
     )
     position: Mapped[int] = mapped_column(SmallInteger)
     text: Mapped[str] = mapped_column(Text)
+
+
+class ExtractionRunRow(Base):
+    """One extraction request, written whether it succeeded or not.
+
+    A failed run has spec_id NULL and error set. spec_id also becomes NULL
+    if the spec is deleted later, so `succeeded` is stored rather than
+    derived from it.
+    """
+
+    __tablename__ = "extraction_run"
+    __table_args__ = (
+        # A spec comes from exactly one run. NULLs (failed runs) do not
+        # collide in a PostgreSQL unique constraint. Also the index for
+        # looking a run up by spec.
+        UniqueConstraint("spec_id"),
+        CheckConstraint(
+            "succeeded = (error IS NULL)", name="error_set_iff_failed"
+        ),
+        CheckConstraint(
+            "input_tokens >= 0 AND output_tokens >= 0 "
+            "AND latency_ms >= 0 AND attempts >= 1",
+            name="metrics_in_range",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    requirement_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("requirement.id", ondelete="CASCADE"), index=True
+    )
+    spec_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("spec.id", ondelete="SET NULL")
+    )
+    model: Mapped[str] = mapped_column(String(80))
+    prompt_version: Mapped[str] = mapped_column(String(20))
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    output_tokens: Mapped[int] = mapped_column(Integer)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    attempts: Mapped[int] = mapped_column(SmallInteger, server_default=text("1"))
+    succeeded: Mapped[bool] = mapped_column(Boolean)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    requirement: Mapped[RequirementRow] = relationship()
+    spec: Mapped[SpecRow | None] = relationship()

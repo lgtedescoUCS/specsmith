@@ -8,6 +8,11 @@ from specsmith.domain.models import ExtractionMeta
 class DomainError(Exception):
     """Base class for errors raised by the domain and service layers."""
 
+    # True for errors raised after the request wrote a record of the
+    # failure itself (an audit row). The request's transaction then commits
+    # before the error propagates, instead of rolling that record back.
+    keeps_transaction: bool = False
+
 
 class SpecNotFoundError(DomainError):
     def __init__(self, spec_id: UUID) -> None:
@@ -21,6 +26,8 @@ class ExtractionError(DomainError):
     Carries the metadata of the attempts made, so the failed run can be
     recorded: a failure is data, not the absence of data.
     """
+
+    keeps_transaction = True
 
     def __init__(self, reason: str, meta: ExtractionMeta) -> None:
         self.reason = reason

@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from specsmith.config import get_settings
+from specsmith.domain.errors import DomainError
 
 
 @lru_cache
@@ -33,11 +34,27 @@ def get_session() -> Iterator[Session]:
     """One session and one transaction per request.
 
     The transaction commits when the request handler returns and rolls back
-    if it raises. Repositories only flush; they never commit, so the whole
+    if it raises, with one exception: a DomainError with keeps_transaction
+    (a failed extraction, whose run was just recorded) commits and then
+    propagates, so the failure stays on record and the client still gets
+    the error. Repositories only flush; they never commit, so the whole
     request is atomic and tests can wrap it in a transaction they roll back.
     """
-    with get_sessionmaker().begin() as session:
-        yield session
+    with get_sessionmaker()() as session:
+        session.begin()
+        try:
+            yield session
+        except DomainError as exc:
+            if exc.keeps_transaction:
+                session.commit()
+            else:
+                session.rollback()
+            raise
+        except BaseException:
+            session.rollback()
+            raise
+        else:
+            session.commit()
 
 
 def database_is_reachable(session: Session) -> bool:

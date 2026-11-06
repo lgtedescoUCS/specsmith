@@ -62,8 +62,10 @@ class Spec(_DomainModel):
 class ExtractionMeta(_DomainModel):
     """How a spec was extracted, summed over every attempt of one request."""
 
-    model: str = Field(min_length=1)
-    prompt_version: str = Field(min_length=1)
+    # Lengths match the extraction_run columns, so an oversized value fails
+    # here with a clear message instead of at INSERT time.
+    model: str = Field(min_length=1, max_length=80)
+    prompt_version: str = Field(min_length=1, max_length=20)
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     latency_ms: int = Field(ge=0)
