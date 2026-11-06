@@ -42,14 +42,32 @@ class Constraint(_DomainModel):
 
 OpenQuestion = Annotated[str, Field(min_length=1)]
 
+# Shared with the LLM output schema (services/spec_draft.py), so the limits
+# the model is told about are the limits the domain enforces.
+OBJECTIVE_MAX_LENGTH = 300
+MAX_OPEN_QUESTIONS = 10
+
 
 class Spec(_DomainModel):
-    objective: str = Field(min_length=1, max_length=300)
+    objective: str = Field(min_length=1, max_length=OBJECTIVE_MAX_LENGTH)
     current_state: dict[str, str] = Field(default_factory=dict)
     target_state: dict[str, str] = Field(default_factory=dict)
     constraints: list[Constraint] = Field(default_factory=list)
-    open_questions: list[OpenQuestion] = Field(default_factory=list, max_length=10)
+    open_questions: list[OpenQuestion] = Field(
+        default_factory=list, max_length=MAX_OPEN_QUESTIONS
+    )
     confidence: Confidence
+
+
+class ExtractionMeta(_DomainModel):
+    """How a spec was extracted, summed over every attempt of one request."""
+
+    model: str = Field(min_length=1)
+    prompt_version: str = Field(min_length=1)
+    input_tokens: int = Field(ge=0)
+    output_tokens: int = Field(ge=0)
+    latency_ms: int = Field(ge=0)
+    attempts: int = Field(ge=1)
 
 
 class StoredSpec(Spec):

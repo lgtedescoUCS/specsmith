@@ -27,6 +27,10 @@ class LLMResponse:
 
 
 class LLMProvider(Protocol):
+    # The configured model. Recorded for runs that fail before any response
+    # arrives (a timeout on the first attempt) and so have no response.model.
+    model: str
+
     def extract(self, prompt: str, schema: dict[str, Any]) -> LLMResponse:
         """Ask the model for output conforming to the JSON `schema`.
 

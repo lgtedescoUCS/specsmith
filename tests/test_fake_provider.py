@@ -26,12 +26,19 @@ def test_string_item_becomes_response_with_default_metadata() -> None:
     )
 
 
-def test_token_counts_are_configurable() -> None:
-    provider = FakeProvider(["{}"], input_tokens=7, output_tokens=3)
+def test_model_and_token_counts_are_configurable() -> None:
+    provider = FakeProvider(
+        ["{}"], model="other-model", input_tokens=7, output_tokens=3
+    )
 
     response = provider.extract("prompt", SCHEMA)
 
-    assert (response.input_tokens, response.output_tokens) == (7, 3)
+    assert provider.model == "other-model"
+    assert (response.model, response.input_tokens, response.output_tokens) == (
+        "other-model",
+        7,
+        3,
+    )
 
 
 def test_llm_response_item_is_returned_unchanged() -> None:

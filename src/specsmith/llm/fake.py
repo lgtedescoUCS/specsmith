@@ -36,9 +36,11 @@ class FakeProvider:
         self,
         responses: Iterable[ScriptedItem],
         *,
+        model: str = FAKE_MODEL,
         input_tokens: int = 100,
         output_tokens: int = 50,
     ) -> None:
+        self.model = model
         self._responses: deque[ScriptedItem] = deque(responses)
         self._input_tokens = input_tokens
         self._output_tokens = output_tokens
@@ -58,7 +60,7 @@ class FakeProvider:
             return item
         return LLMResponse(
             content=item,
-            model=FAKE_MODEL,
+            model=self.model,
             input_tokens=self._input_tokens,
             output_tokens=self._output_tokens,
         )
