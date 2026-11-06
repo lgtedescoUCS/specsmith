@@ -17,6 +17,7 @@ cp .env.example .env        # add your API key
 docker compose up -d        # postgres 16 on host port 5433
 
 uv sync
+uv run alembic upgrade head
 uv run uvicorn specsmith.main:app --reload
 ```
 
