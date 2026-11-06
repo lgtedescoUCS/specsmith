@@ -3,3 +3,14 @@
 
 # Private build notes
 notes/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Evaluation output (keep the folder, not the runs)
+eval/results/*.json
+!eval/results/.gitkeep

@@ -1,0 +1,25 @@
+[project]
+name = "specsmith"
+version = "0.1.0"
+description = "Turns free-form client requirements into validated, structured technical specifications using an LLM."
+authors = [
+    { name = "Luca Giasson Tedesco", email = "lgtedesco@ucs.br" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.162.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
