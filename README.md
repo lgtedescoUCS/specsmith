@@ -30,6 +30,13 @@ not clash with a PostgreSQL server already installed on the machine.
 uv run pytest               # offline, no API calls
 ```
 
+Tests that touch the database need PostgreSQL running (`docker compose up -d`).
+When it is not reachable they are skipped with a message saying so, and the
+rest of the suite still runs. They use a separate `specsmith_test` database,
+rebuilt from the migrations at the start of each run, and every test is
+rolled back, so your development data is never touched. Override the
+location with `TEST_DATABASE_URL` if needed.
+
 ## License
 
 MIT
