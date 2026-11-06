@@ -7,7 +7,8 @@ imported without a database or a DATABASE_URL.
 from collections.abc import Iterator
 from functools import lru_cache
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from specsmith.config import get_settings
@@ -15,7 +16,12 @@ from specsmith.config import get_settings
 
 @lru_cache
 def get_engine() -> Engine:
-    return create_engine(get_settings().database_url, pool_pre_ping=True)
+    settings = get_settings()
+    return create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": settings.database_connect_timeout_seconds},
+    )
 
 
 @lru_cache
@@ -32,3 +38,11 @@ def get_session() -> Iterator[Session]:
     """
     with get_sessionmaker().begin() as session:
         yield session
+
+
+def database_is_reachable(session: Session) -> bool:
+    try:
+        session.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return False
+    return True

@@ -26,7 +26,7 @@ from specsmith.main import app
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
-    "postgresql+psycopg://specsmith:specsmith@localhost:5433/specsmith_test",
+    "postgresql+psycopg://specsmith:specsmith@127.0.0.1:5433/specsmith_test",
 )
 
 

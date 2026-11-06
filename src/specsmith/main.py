@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from specsmith.db import repository
-from specsmith.db.session import get_session
+from specsmith.db.session import database_is_reachable, get_session
 from specsmith.domain.errors import SpecNotFoundError
 from specsmith.domain.models import Spec, StoredSpec
 
@@ -44,9 +44,20 @@ def spec_not_found(request: Request, exc: SpecNotFoundError) -> JSONResponse:
     )
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+@app.get(
+    "/health",
+    responses={503: {"description": "The database is not reachable"}},
+)
+def health(session: SessionDep) -> JSONResponse:
+    # 503, not 500: the app is running but cannot serve requests, which is
+    # what load balancers and orchestrators expect from a failing check.
+    # Error details stay out of the body so the check leaks nothing.
+    if not database_is_reachable(session):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unavailable", "database": "unreachable"},
+        )
+    return JSONResponse(content={"status": "ok", "database": "ok"})
 
 
 @app.post("/specs", status_code=status.HTTP_201_CREATED)
