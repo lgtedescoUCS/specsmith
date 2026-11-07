@@ -1,0 +1,15 @@
+# Secrets never enter the build context, even though the Dockerfile copies
+# only named paths.
+.env
+.env.*
+
+# Local state and files the image does not need
+.git
+.venv
+.pytest_cache
+.ruff_cache
+**/__pycache__
+.claude
+notes
+eval
+tests
