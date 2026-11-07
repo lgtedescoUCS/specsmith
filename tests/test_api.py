@@ -4,19 +4,25 @@ The LLM is the FakeProvider injected by conftest (`fake_llm`).
 """
 
 import json
+from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Connection, event, func, select
+from sqlalchemy import Connection, event, func, select, update
 from sqlalchemy.orm import Session
 
 from specsmith.db.models import ExtractionRunRow, RequirementRow, SpecRow
 from specsmith.domain.errors import LLMNotConfiguredError
 from specsmith.llm.base import LLMError, LLMTimeoutError, LLMUnavailableError
 from specsmith.llm.fake import FakeProvider
-from specsmith.main import RAW_TEXT_MAX_LENGTH, app, get_extractor
+from specsmith.main import (
+    RAW_TEXT_MAX_LENGTH,
+    app,
+    get_daily_extraction_limit,
+    get_extractor,
+)
 
 RAW_TEXT = "Client wants 650 plates/day on the tempering line, from 400 today."
 
@@ -256,3 +262,76 @@ def test_failed_commit_is_an_error_not_a_201(
 
     assert response.status_code == 500
     assert count(connection, RequirementRow) == 0
+
+
+# --- daily extraction cap ----------------------------------------------------
+
+
+def limit_to(n: int) -> None:
+    app.dependency_overrides[get_daily_extraction_limit] = lambda: n
+
+
+def test_post_over_the_daily_limit_returns_429_without_calling_the_llm(
+    client: TestClient, fake_llm: FakeProvider, connection: Connection
+) -> None:
+    limit_to(2)
+    fake_llm.queue(VALID_ANSWER, VALID_ANSWER)
+    assert client.post("/specs", json=payload()).status_code == 201
+    assert client.post("/specs", json=payload()).status_code == 201
+    calls_before = len(fake_llm.calls)
+
+    response = client.post("/specs", json=payload())
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": "Daily limit of 2 extractions reached"}
+    # The test runs in one transaction, so now() is the same for every row:
+    # the oldest run frees its slot exactly 24 hours later.
+    assert response.headers["Retry-After"] == "86400"
+    assert len(fake_llm.calls) == calls_before
+    assert count(connection, ExtractionRunRow) == 2
+    assert count(connection, RequirementRow) == 2
+
+
+def test_failed_extractions_count_toward_the_daily_limit(
+    client: TestClient, fake_llm: FakeProvider
+) -> None:
+    limit_to(1)
+    fake_llm.queue("bad", "bad", "bad")
+    assert client.post("/specs", json=payload()).status_code == 422
+
+    response = client.post("/specs", json=payload())
+
+    assert response.status_code == 429
+
+
+def test_runs_older_than_a_day_free_their_slot(
+    client: TestClient, fake_llm: FakeProvider, connection: Connection
+) -> None:
+    limit_to(1)
+    fake_llm.queue(VALID_ANSWER, VALID_ANSWER)
+    assert client.post("/specs", json=payload()).status_code == 201
+    connection.execute(
+        update(ExtractionRunRow).values(
+            created_at=func.now() - timedelta(hours=24, seconds=1)
+        )
+    )
+
+    response = client.post("/specs", json=payload())
+
+    assert response.status_code == 201
+
+
+def test_retry_after_counts_down_from_the_oldest_run_in_the_window(
+    client: TestClient, fake_llm: FakeProvider, connection: Connection
+) -> None:
+    limit_to(1)
+    fake_llm.queue(VALID_ANSWER)
+    assert client.post("/specs", json=payload()).status_code == 201
+    connection.execute(
+        update(ExtractionRunRow).values(created_at=func.now() - timedelta(hours=23))
+    )
+
+    response = client.post("/specs", json=payload())
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "3600"

@@ -22,6 +22,7 @@ LLM_ENV = (
     "LLM_TIMEOUT_SECONDS",
     "PROMPT_VERSION",
     "MAX_EXTRACTION_RETRIES",
+    "MAX_EXTRACTIONS_PER_DAY",
 )
 
 
@@ -113,3 +114,18 @@ def test_extractor_uses_prompt_version_and_retries_from_settings(
     assert extractor._provider is provider
     assert extractor._prompt.version == "v3"
     assert extractor._max_retries == 5
+
+
+def test_daily_extraction_limit_defaults_to_20_and_comes_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert settings().max_extractions_per_day == 20
+
+    use(monkeypatch, settings(max_extractions_per_day=7))
+
+    assert main.get_daily_extraction_limit() == 7
+
+
+def test_daily_extraction_limit_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        settings(max_extractions_per_day=0)

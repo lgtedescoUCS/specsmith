@@ -11,6 +11,7 @@ from specsmith.config import get_settings
 from specsmith.db import repository
 from specsmith.db.session import database_is_reachable, get_session
 from specsmith.domain.errors import (
+    DailyExtractionLimitError,
     ExtractionError,
     ExtractionFailedError,
     ExtractionTimeoutError,
@@ -69,6 +70,13 @@ def get_extractor(
 
 
 ExtractorDep = Annotated[ExtractionService, Depends(get_extractor)]
+
+
+def get_daily_extraction_limit() -> int:
+    return get_settings().max_extractions_per_day
+
+
+DailyLimitDep = Annotated[int, Depends(get_daily_extraction_limit)]
 
 # Upper bound on the client text, so one request cannot run up an
 # arbitrary token bill. Generous for a written requirement.
@@ -130,8 +138,20 @@ def llm_not_configured(request: Request, exc: LLMNotConfiguredError) -> JSONResp
     )
 
 
+@app.exception_handler(DailyExtractionLimitError)
+def daily_limit_reached(
+    request: Request, exc: DailyExtractionLimitError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"detail": str(exc)},
+        headers={"Retry-After": str(exc.retry_after_seconds)},
+    )
+
+
 _ERROR_RESPONSES = {
     422: {"description": "The LLM output never passed validation"},
+    429: {"description": "The daily extraction limit was reached; see Retry-After"},
     502: {"description": "The LLM provider is unreachable or rejected the call"},
     503: {"description": "No LLM provider is configured"},
     504: {"description": "The LLM did not answer in time"},
@@ -160,10 +180,17 @@ def health(session: SessionDep) -> JSONResponse:
     responses=_ERROR_RESPONSES,
 )
 def create_spec(
-    body: CreateSpecRequest, session: SessionDep, extractor: ExtractorDep
+    body: CreateSpecRequest,
+    session: SessionDep,
+    extractor: ExtractorDep,
+    daily_limit: DailyLimitDep,
 ) -> StoredSpec:
     return create_spec_from_text(
-        session, extractor, raw_text=body.raw_text, source=body.source
+        session,
+        extractor,
+        raw_text=body.raw_text,
+        source=body.source,
+        daily_limit=daily_limit,
     )
 
 

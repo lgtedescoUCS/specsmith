@@ -55,6 +55,16 @@ class ExtractionUpstreamError(ExtractionError):
     """The LLM provider was unreachable or rejected the call."""
 
 
+class DailyExtractionLimitError(DomainError):
+    """The server already ran its allowed number of extractions in the last
+    24 hours. Raised before calling the LLM, so it spends no tokens."""
+
+    def __init__(self, limit: int, retry_after_seconds: int) -> None:
+        self.limit = limit
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(f"Daily limit of {limit} extractions reached")
+
+
 class LLMNotConfiguredError(DomainError):
     """No LLM provider credentials are configured on this server."""
 

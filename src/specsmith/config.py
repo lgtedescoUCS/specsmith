@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30, gt=0)
     prompt_version: str = "v3"
     max_extraction_retries: int = Field(default=2, ge=0)
+    # Extractions the API runs in a rolling 24 hours, across all clients,
+    # so a public deployment cannot run up an open-ended token bill.
+    max_extractions_per_day: int = Field(default=20, ge=1)
 
 
 @lru_cache

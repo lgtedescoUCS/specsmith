@@ -125,6 +125,7 @@ def test_create_spec_records_a_successful_run_with_retries(
         ),
         raw_text=RAW_TEXT,
         source=None,
+        daily_limit=None,
     )
 
     run = only_run(db_session)
@@ -140,6 +141,7 @@ def test_create_spec_records_a_failed_run_then_raises(db_session: Session) -> No
             extractor("bad", "bad", "bad"),
             raw_text=RAW_TEXT,
             source="test",
+            daily_limit=None,
         )
 
     run = only_run(db_session)
@@ -156,6 +158,7 @@ def test_create_spec_records_a_timeout(db_session: Session) -> None:
             extractor(LLMTimeoutError("no answer in 30 s")),
             raw_text=RAW_TEXT,
             source="test",
+            daily_limit=None,
         )
 
     run = only_run(db_session)

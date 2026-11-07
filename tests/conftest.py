@@ -28,10 +28,17 @@ from sqlalchemy.orm import Session, sessionmaker
 from specsmith.db import session as db_session_module
 from specsmith.llm.fake import FakeProvider
 from specsmith.llm.prompts import load_prompt
-from specsmith.main import app, get_extractor, get_provider
+from specsmith.main import (
+    app,
+    get_daily_extraction_limit,
+    get_extractor,
+    get_provider,
+)
 from specsmith.services.extraction import ExtractionService
 
 TEST_MAX_RETRIES = 2
+# High enough that only the tests about the cap ever reach it.
+TEST_DAILY_LIMIT = 1000
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -124,3 +131,12 @@ def fake_llm() -> Iterator[FakeProvider]:
     yield provider
     app.dependency_overrides.pop(get_provider, None)
     app.dependency_overrides.pop(get_extractor, None)
+
+
+@pytest.fixture(autouse=True)
+def daily_limit() -> Iterator[None]:
+    """Keeps the real get_daily_extraction_limit (which reads Settings) out
+    of tests. Tests about the cap override it again with a small value."""
+    app.dependency_overrides[get_daily_extraction_limit] = lambda: TEST_DAILY_LIMIT
+    yield
+    app.dependency_overrides.pop(get_daily_extraction_limit, None)

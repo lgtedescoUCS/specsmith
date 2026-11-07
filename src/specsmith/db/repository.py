@@ -4,8 +4,11 @@ Functions here flush but never commit: the caller owns the transaction
 (see specsmith.db.session.get_session).
 """
 
+from datetime import datetime, timedelta
+from typing import NamedTuple
 from uuid import UUID
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from specsmith.db.models import (
@@ -63,6 +66,26 @@ def record_extraction_failure(
     session.add(run)
     session.flush()
     return run.id
+
+
+class RecentRuns(NamedTuple):
+    count: int
+    oldest: datetime | None
+    now: datetime
+
+
+def recent_extraction_runs(session: Session, *, window: timedelta) -> RecentRuns:
+    """Runs, successful or not, recorded within `window` of the database's
+    clock. `now` comes from the database too, so callers compare times on a
+    single clock, the one that filled created_at."""
+    count, oldest, now = session.execute(
+        select(
+            func.count(),
+            func.min(ExtractionRunRow.created_at),
+            func.now(),
+        ).where(ExtractionRunRow.created_at > func.now() - window)
+    ).one()
+    return RecentRuns(count=count, oldest=oldest, now=now)
 
 
 def _run_row(
