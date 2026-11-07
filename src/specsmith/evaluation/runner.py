@@ -6,7 +6,8 @@ Depends on the LLMProvider protocol only; the CLI picks the provider.
 
 A report keeps each case's raw output next to its score, so that
 `rescore` can score it again after the answer key changes, without
-calling the model.
+calling the model. It also keeps every answer that failed validation and
+was retried, with its errors, so retries can be explained.
 """
 
 import hashlib
@@ -17,12 +18,15 @@ from pathlib import Path
 from typing import Any
 
 from specsmith.domain.errors import ExtractionError
-from specsmith.domain.models import ExtractionMeta, Spec
+from specsmith.domain.models import ExtractionMeta, RejectedAttempt, Spec
 from specsmith.evaluation.dataset import EvalCase
 from specsmith.evaluation.scoring import CaseScore, Summary, score_case, summarize
 from specsmith.services.extraction import ExtractionService
 
-REPORT_FORMAT = 1
+# 2 added rejected_attempts. Format 1 reports are still rescored (as having
+# none).
+REPORT_FORMAT = 2
+_READABLE_FORMATS = {1, 2}
 
 # USD per million tokens (input, output), standard Messages API requests.
 # Checked on 2026-11-06 at
@@ -75,6 +79,7 @@ class CaseRun:
     meta: ExtractionMeta
     error_type: str | None = None
     error: str | None = None
+    rejected: tuple[RejectedAttempt, ...] = ()
 
 
 def run_cases(
@@ -90,7 +95,13 @@ def run_cases(
     for case in cases:
         try:
             result = service.extract(case.raw_text)
-            run = CaseRun(case.id, case.raw_text, result.spec, result.meta)
+            run = CaseRun(
+                case.id,
+                case.raw_text,
+                result.spec,
+                result.meta,
+                rejected=result.rejected,
+            )
         except ExtractionError as exc:
             run = CaseRun(
                 case.id,
@@ -99,6 +110,7 @@ def run_cases(
                 exc.meta,
                 error_type=type(exc).__name__,
                 error=exc.reason,
+                rejected=exc.rejected,
             )
         runs.append(run)
         if on_case is not None:
@@ -175,6 +187,10 @@ def build_report(
                 "error_type": run.error_type,
                 "error": run.error,
                 "meta": run.meta.model_dump(mode="json"),
+                "rejected_attempts": [
+                    {"attempt": r.attempt, "errors": r.errors, "content": r.content}
+                    for r in run.rejected
+                ],
                 "cost_usd": cost,
                 "score": score_to_dict(score),
             }
@@ -215,9 +231,10 @@ def rescore(
     Refuses a case whose text changed since the run: its output answers a
     different requirement.
     """
-    if report.get("format") != REPORT_FORMAT:
+    if report.get("format") not in _READABLE_FORMATS:
         raise ReportMismatchError(
-            f"report format {report.get('format')!r}, expected {REPORT_FORMAT}"
+            f"report format {report.get('format')!r}, "
+            f"expected one of {sorted(_READABLE_FORMATS)}"
         )
     by_id = {case.id: case for case in cases}
     runs: list[CaseRun] = []
@@ -238,6 +255,10 @@ def rescore(
                 meta=ExtractionMeta.model_validate(entry["meta"]),
                 error_type=entry["error_type"],
                 error=entry["error"],
+                rejected=tuple(
+                    RejectedAttempt(**item)
+                    for item in entry.get("rejected_attempts", [])
+                ),
             )
         )
     require_annotated([by_id[run.case_id] for run in runs])

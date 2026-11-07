@@ -198,6 +198,42 @@ def test_each_retry_carries_only_the_latest_answer() -> None:
     assert second in provider.calls[2].prompt
 
 
+def test_rejected_answers_are_kept_with_their_errors() -> None:
+    first, second = "not json", as_json(confidence="certain")
+    svc, _ = service(first, second, as_json())
+
+    result = svc.extract(RAW_TEXT)
+
+    assert [r.attempt for r in result.rejected] == [1, 2]
+    assert [r.content for r in result.rejected] == [first, second]
+    assert "- (root): Invalid JSON" in result.rejected[0].errors
+    assert "- confidence:" in result.rejected[1].errors
+
+
+def test_first_answer_passing_has_no_rejected_attempts() -> None:
+    svc, _ = service(as_json())
+
+    assert svc.extract(RAW_TEXT).rejected == ()
+
+
+def test_giving_up_keeps_every_rejected_answer() -> None:
+    svc, _ = service("a", "b", "c", max_retries=2)
+
+    with pytest.raises(ExtractionFailedError) as exc_info:
+        svc.extract(RAW_TEXT)
+
+    assert [r.content for r in exc_info.value.rejected] == ["a", "b", "c"]
+
+
+def test_timeout_after_a_rejection_keeps_the_rejection() -> None:
+    svc, _ = service("bad", LLMTimeoutError("slow"))
+
+    with pytest.raises(ExtractionTimeoutError) as exc_info:
+        svc.extract(RAW_TEXT)
+
+    assert [r.content for r in exc_info.value.rejected] == ["bad"]
+
+
 def test_tokens_are_summed_over_attempts() -> None:
     svc, _ = service(
         LLMResponse("bad", FAKE_MODEL, input_tokens=10, output_tokens=1),

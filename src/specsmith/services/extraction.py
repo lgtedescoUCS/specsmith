@@ -14,7 +14,7 @@ from specsmith.domain.errors import (
     ExtractionTimeoutError,
     ExtractionUpstreamError,
 )
-from specsmith.domain.models import ExtractionMeta, Spec
+from specsmith.domain.models import ExtractionMeta, RejectedAttempt, Spec
 from specsmith.llm.base import (
     LLMError,
     LLMProvider,
@@ -29,6 +29,8 @@ from specsmith.services.spec_draft import SPEC_DRAFT_SCHEMA, parse_spec
 class ExtractionResult:
     spec: Spec
     meta: ExtractionMeta
+    # Answers that failed validation before this one passed, in order.
+    rejected: tuple[RejectedAttempt, ...] = ()
 
 
 class ExtractionService:
@@ -48,6 +50,7 @@ class ExtractionService:
         prompt = self._prompt.render(raw_text)
         model = self._provider.model
         input_tokens = output_tokens = attempts = 0
+        rejected: list[RejectedAttempt] = []
         started = time.perf_counter()
 
         def meta() -> ExtractionMeta:
@@ -68,13 +71,17 @@ class ExtractionService:
             # would most likely repeat. Backoff for transient errors is a
             # provider concern (phase 4).
             except LLMTimeoutError as exc:
-                raise ExtractionTimeoutError(f"LLM timed out: {exc}", meta()) from exc
+                raise ExtractionTimeoutError(
+                    f"LLM timed out: {exc}", meta(), tuple(rejected)
+                ) from exc
             except LLMUnavailableError as exc:
                 raise ExtractionUpstreamError(
-                    f"LLM unavailable: {exc}", meta()
+                    f"LLM unavailable: {exc}", meta(), tuple(rejected)
                 ) from exc
             except LLMError as exc:
-                raise ExtractionFailedError(f"LLM failed: {exc}", meta()) from exc
+                raise ExtractionFailedError(
+                    f"LLM failed: {exc}", meta(), tuple(rejected)
+                ) from exc
 
             model = response.model
             input_tokens += response.input_tokens
@@ -83,11 +90,17 @@ class ExtractionService:
                 spec = parse_spec(response.content)
             except ValidationError as exc:
                 errors = describe_validation_error(exc)
+                rejected.append(
+                    RejectedAttempt(
+                        attempt=attempts, errors=errors, content=response.content
+                    )
+                )
                 if attempts > self._max_retries:
                     raise ExtractionFailedError(
                         f"Output failed validation after {attempts} attempt(s):\n"
                         f"{errors}",
                         meta(),
+                        tuple(rejected),
                     ) from exc
                 # Each retry is a fresh single-message request: the main
                 # prompt plus the rejected answer and its errors, worded by
@@ -96,7 +109,7 @@ class ExtractionService:
                     raw_text, previous_answer=response.content, errors=errors
                 )
                 continue
-            return ExtractionResult(spec=spec, meta=meta())
+            return ExtractionResult(spec=spec, meta=meta(), rejected=tuple(rejected))
 
 
 def describe_validation_error(error: ValidationError) -> str:

@@ -150,6 +150,48 @@ def test_report_scores_each_case_and_sums_usage(dataset: Path) -> None:
     assert json.loads(json.dumps(report)) == report
 
 
+def test_report_keeps_rejected_attempts_and_rescore_carries_them(
+    dataset: Path,
+) -> None:
+    cases = load_dataset(dataset)
+    too_many = draft(open_questions=[f"Q{i}?" for i in range(11)])
+    fake = FakeProvider([too_many, draft(), "a", "b"])
+    runs = run_cases(service(fake, max_retries=1), cases)
+    report = build_report(
+        runs,
+        cases,
+        prompt_version="v1",
+        model="fake-model",
+        dataset_path=dataset,
+        created_at=NOW,
+    )
+    stored = json.loads(json.dumps(report))
+
+    first, second = stored["cases"]
+    assert [r["attempt"] for r in first["rejected_attempts"]] == [1]
+    assert first["rejected_attempts"][0]["content"] == too_many
+    assert "open_questions" in first["rejected_attempts"][0]["errors"]
+    # A case that failed keeps every rejected answer, the last one included.
+    assert [r["content"] for r in second["rejected_attempts"]] == ["a", "b"]
+
+    again = rescore(stored, cases, dataset_path=dataset, created_at=NOW)
+    assert again["cases"][0]["rejected_attempts"] == first["rejected_attempts"]
+
+
+def test_rescore_reads_format_1_reports_without_rejected_attempts(
+    dataset: Path,
+) -> None:
+    report = make_report(dataset)
+    report["format"] = 1
+    for entry in report["cases"]:
+        del entry["rejected_attempts"]
+
+    again = rescore(report, load_dataset(dataset), dataset_path=dataset, created_at=NOW)
+
+    # Format 1 never stored them, so the rescored report has none either.
+    assert [c["rejected_attempts"] for c in again["cases"]] == [[], []]
+
+
 @pytest.mark.parametrize(
     ("model", "cost"),
     [("claude-sonnet-5-5", 0.012), ("claude-opus-5-5", 0.024), ("other", None)],

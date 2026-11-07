@@ -118,6 +118,10 @@ def _print_case(run: CaseRun) -> None:
         f"latency={run.meta.latency_ms}ms  cost={cost_text}",
         flush=True,
     )
+    for rejected in run.rejected:
+        lines = rejected.errors.splitlines() or [""]
+        extra = f" (+{len(lines) - 1} more)" if len(lines) > 1 else ""
+        print(f"     attempt {rejected.attempt} rejected: {lines[0]}{extra}", flush=True)
 
 
 def main(

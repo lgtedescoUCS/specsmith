@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from specsmith.domain.models import ExtractionMeta
+from specsmith.domain.models import ExtractionMeta, RejectedAttempt
 
 
 class DomainError(Exception):
@@ -29,9 +29,17 @@ class ExtractionError(DomainError):
 
     keeps_transaction = True
 
-    def __init__(self, reason: str, meta: ExtractionMeta) -> None:
+    def __init__(
+        self,
+        reason: str,
+        meta: ExtractionMeta,
+        rejected: tuple[RejectedAttempt, ...] = (),
+    ) -> None:
         self.reason = reason
         self.meta = meta
+        # Every answer that failed validation before the extraction gave up
+        # or the provider failed, in order.
+        self.rejected = rejected
         super().__init__(reason)
 
 

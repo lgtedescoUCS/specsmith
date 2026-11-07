@@ -4,6 +4,7 @@ This module knows nothing about the database or the LLM. The same models
 validate API input today and LLM output from Phase 2 on.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
@@ -70,6 +71,19 @@ class ExtractionMeta(_DomainModel):
     output_tokens: int = Field(ge=0)
     latency_ms: int = Field(ge=0)
     attempts: int = Field(ge=1)
+
+
+@dataclass(frozen=True)
+class RejectedAttempt:
+    """One model answer that failed validation and was retried or given up on.
+
+    A plain dataclass, not a model: `content` is the raw answer exactly as
+    received, so it must not be stripped or validated.
+    """
+
+    attempt: int
+    errors: str
+    content: str
 
 
 class StoredSpec(Spec):
