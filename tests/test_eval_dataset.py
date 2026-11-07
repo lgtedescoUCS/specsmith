@@ -12,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from specsmith.domain.models import Confidence, ConstraintKind
+from specsmith.evaluation.cli import EVAL_DIR
 from specsmith.evaluation.dataset import (
     DatasetError,
     EvalCase,
@@ -185,6 +186,16 @@ def test_load_dataset_rejects_duplicate_ids(tmp_path: Path) -> None:
 
     with pytest.raises(DatasetError, match="duplicate id '007'.*line 1"):
         load_dataset(path)
+
+
+def test_the_real_dataset_loads_fully_annotated() -> None:
+    # Only the shape: the answer keys are written by hand and frozen after
+    # the baseline corrections; this test never checks their content.
+    cases = load_dataset(EVAL_DIR / "dataset.jsonl")
+
+    assert [case.id for case in cases] == [f"{n:03d}" for n in range(1, 21)]
+    assert {case.lang for case in cases} == {"pt", "en"}
+    assert all(case.annotated for case in cases)
 
 
 def test_load_dataset_rejects_an_empty_file(tmp_path: Path) -> None:
