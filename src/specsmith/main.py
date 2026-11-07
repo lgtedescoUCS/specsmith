@@ -3,7 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -156,6 +156,14 @@ _ERROR_RESPONSES = {
     503: {"description": "No LLM provider is configured"},
     504: {"description": "The LLM did not answer in time"},
 }
+
+
+# The bare URL of the deployment opens the interactive docs. Kept out of the
+# OpenAPI schema: it is a convenience for browsers, not part of the API.
+# Temporary (307), so browsers do not cache it if / ever serves a page.
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/docs")
 
 
 @app.get(
