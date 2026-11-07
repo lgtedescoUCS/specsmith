@@ -2,8 +2,14 @@
 
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Hosted Postgres providers hand out URLs without a driver (postgres:// or
+# postgresql://). SQLAlchemy reads a bare scheme as psycopg2, which is not
+# installed; this app uses psycopg 3.
+_DRIVERLESS_SCHEMES = ("postgres://", "postgresql://")
+_PSYCOPG_SCHEME = "postgresql+psycopg://"
 
 
 class Settings(BaseSettings):
@@ -14,6 +20,17 @@ class Settings(BaseSettings):
     # No default on purpose: a missing URL should fail loudly instead of
     # silently connecting to whatever database happens to be on localhost.
     database_url: str
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg_driver(cls, url: str) -> str:
+        # Only the scheme changes; credentials and query parameters such as
+        # sslmode=require are kept as given.
+        for scheme in _DRIVERLESS_SCHEMES:
+            if url.startswith(scheme):
+                return _PSYCOPG_SCHEME + url[len(scheme) :]
+        return url
+
     # Without a connect timeout, a database that silently drops connections
     # makes every request (and /health) hang instead of failing.
     database_connect_timeout_seconds: int = 5
