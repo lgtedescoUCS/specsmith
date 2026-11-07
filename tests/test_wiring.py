@@ -49,7 +49,7 @@ def test_llm_settings_have_the_documented_defaults() -> None:
 
     assert s.anthropic_api_key is None
     assert (s.llm_model, s.llm_timeout_seconds) == ("claude-sonnet-5-5", 30)
-    assert (s.prompt_version, s.max_extraction_retries) == ("v1", 2)
+    assert (s.prompt_version, s.max_extraction_retries) == ("v3", 2)
 
 
 @pytest.mark.parametrize(
@@ -111,5 +111,5 @@ def test_extractor_uses_prompt_version_and_retries_from_settings(
     extractor = main.get_extractor(provider)
 
     assert extractor._provider is provider
-    assert extractor._prompt.version == "v1"
+    assert extractor._prompt.version == "v3"
     assert extractor._max_retries == 5

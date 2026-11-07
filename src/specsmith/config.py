@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr | None = None
     llm_model: str = "claude-sonnet-5-5"
     llm_timeout_seconds: float = Field(default=30, gt=0)
-    prompt_version: str = "v1"
+    prompt_version: str = "v3"
     max_extraction_retries: int = Field(default=2, ge=0)
 
 
