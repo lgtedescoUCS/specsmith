@@ -19,6 +19,8 @@ from specsmith.llm.prompts import (
 PUBLISHED_PROMPT_SHA256 = {
     "v1.md": "02e1c68dba6f0c2382e92539e4cec8cdd201afb2e21078f87dec22db93a97caa",
     "v1_retry.md": "8aa062857050b75a6174ec8744fd4244165cafbd07e395aa57ddb421a082eaa8",
+    "v2.md": "d8dc9b1eb11f7c0af52cb55d7087519b67b5e6dabc8d9da2946414dd090bc8af",
+    "v2_retry.md": "7464204eb91323c4ce2afd9e6cc1d6ad6fe2d8d631124064eb6f8648ea31aab6",
 }
 
 MAIN = "Main\n{raw_text}\n"
