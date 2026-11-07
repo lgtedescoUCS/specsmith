@@ -3,6 +3,13 @@
 Turns free-form client requirements into validated, structured technical
 specifications using an LLM.
 
+**[Live demo](https://specsmith.onrender.com/docs)** · interactive OpenAPI
+
+The demo runs on free tiers: after 15 idle minutes the first request
+takes about a minute while the service wakes up. Extractions are capped
+at 20 per 24 hours across all users; past that, `POST /specs` answers
+429 with a `Retry-After` header.
+
 > Work in progress. `POST /specs` extracts a specification from raw text
 > and `GET /specs/{id}` returns it; listing and stats endpoints come later.
 
@@ -111,6 +118,53 @@ rest of the suite still runs. They use a separate `specsmith_test` database,
 rebuilt from the migrations at the start of each run, and every test is
 rolled back, so your development data is never touched. Override the
 location with `TEST_DATABASE_URL` if needed.
+
+## Deployment
+
+The live demo is a Docker web service on [Render](https://render.com)
+with a PostgreSQL 16 database on [Neon](https://neon.com), both on free
+plans. Render auto-deploys every push to `main`.
+
+The image is built from the multi-stage `Dockerfile`. On every start the
+container runs `alembic upgrade head` and then uvicorn on `$PORT`, so
+migrations need no separate step.
+
+To deploy your own copy:
+
+1. Create a Neon project with PostgreSQL 16 and copy its **direct**
+   connection string, with connection pooling off (no `-pooler` in the
+   host).
+2. Create a Render web service from the repository, with the Docker
+   language and the Free instance type.
+3. Set the environment variables below in the Render dashboard. They
+   live there only; nothing secret is in the repository.
+4. Leave the health check path empty.
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | The Neon direct connection string, as given (`postgresql://…?sslmode=require`) |
+| `ANTHROPIC_API_KEY` | A key used only for this deployment |
+| `MAX_EXTRACTIONS_PER_DAY` | Optional, default `20` |
+| `PROMPT_VERSION`, `LLM_MODEL`, `MAX_EXTRACTION_RETRIES`, `LLM_TIMEOUT_SECONDS` | Optional, defaults as in `.env.example` |
+
+Why it is set up this way:
+
+- **The URL is used as the provider gives it.** Settings rewrite a
+  driverless `postgresql://` or `postgres://` scheme to
+  `postgresql+psycopg://` and keep the rest of the URL.
+- **Direct connection, not the pooler.** Neon's pooler runs in
+  transaction mode, which Neon advises against for schema migrations.
+  One instance needs few connections, so the app uses the direct
+  connection too.
+- **No HTTP health check.** Render checks running services every few
+  seconds. Pointed at `/health`, which queries the database, the checks
+  would keep Neon's compute from scaling to zero and use up the free
+  plan's monthly compute hours. Render falls back to a TCP check on the
+  port; `/health` is still there for people.
+- **Budget guard.** The daily cap counts runs in the database, failures
+  included, so restarts do not reset it. It is soft when requests arrive
+  at the same moment; the hard ceiling is a spend limit on the API key's
+  workspace.
 
 ## License
 
