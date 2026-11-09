@@ -19,6 +19,7 @@ from specsmith.db import repository
 from specsmith.db.models import ExtractionRunRow, SpecRow
 from specsmith.domain.models import Spec
 from specsmith.llm.fake import FakeProvider
+from specsmith.main import app, get_daily_extraction_limit
 
 RAW_TEXT = "Client wants 650 plates/day on the tempering line, from 400 today."
 
@@ -221,3 +222,113 @@ def test_offset_past_the_end_is_an_empty_page(
     body = client.get("/specs?offset=10").json()
 
     assert (body["items"], body["total"]) == ([], 1)
+
+
+# --- GET /stats ---------------------------------------------------------------
+
+ZERO_CONFIDENCE = {"high": 0, "medium": 0, "low": 0}
+ZERO_KINDS = {
+    "budget": 0,
+    "deadline": 0,
+    "space": 0,
+    "throughput": 0,
+    "regulatory": 0,
+    "technical": 0,
+    "other": 0,
+}
+
+
+def test_stats_on_an_empty_database(client: TestClient) -> None:
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "extractions": {
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "success_rate": None,
+            "avg_attempts": None,
+            "avg_latency_ms": None,
+        },
+        "tokens": {"input": 0, "output": 0},
+        "estimated_cost": {
+            "total_usd": 0.0,
+            "avg_per_extraction_usd": None,
+            "unpriced_extractions": 0,
+        },
+        "specs": {"total": 0, "by_confidence": ZERO_CONFIDENCE},
+        "constraints_by_kind": ZERO_KINDS,
+        # TEST_DAILY_LIMIT from conftest.
+        "daily_limit": {"limit": 1000, "used_last_24h": 0, "remaining": 1000},
+    }
+
+
+def test_stats_aggregate_runs_specs_and_constraints(
+    client: TestClient, fake_llm: FakeProvider
+) -> None:
+    create(client, fake_llm, answer("low", ("budget", "space")))
+    create(client, fake_llm, "not json", answer("high", ("budget",)))
+    fake_llm.queue("bad", "bad", "bad")  # 3 attempts, all rejected: a 422
+    assert client.post("/specs", json={"raw_text": RAW_TEXT}).status_code == 422
+
+    body = client.get("/stats").json()
+
+    assert body["extractions"] == {
+        "total": 3,
+        "succeeded": 2,
+        "failed": 1,
+        "success_rate": 0.6667,
+        "avg_attempts": 2.0,  # (1 + 2 + 3) / 3
+        "avg_latency_ms": body["extractions"]["avg_latency_ms"],
+    }
+    assert body["extractions"]["avg_latency_ms"] >= 0
+    # The fake answers 100 in / 50 out per attempt, 6 attempts in all.
+    assert body["tokens"] == {"input": 600, "output": 300}
+    assert body["specs"] == {
+        "total": 2,
+        "by_confidence": ZERO_CONFIDENCE | {"low": 1, "high": 1},
+    }
+    assert body["constraints_by_kind"] == ZERO_KINDS | {"budget": 2, "space": 1}
+    assert body["daily_limit"] == {
+        "limit": 1000,
+        "used_last_24h": 3,
+        "remaining": 997,
+    }
+
+
+def test_stats_estimate_cost_per_model_and_count_unpriced_runs(
+    client: TestClient, fake_llm: FakeProvider, connection: Connection
+) -> None:
+    sonnet, opus, _fake = (create(client, fake_llm) for _ in range(3))
+    for spec, model in ((sonnet, "claude-sonnet-5-5"), (opus, "claude-opus-5-5")):
+        connection.execute(
+            update(ExtractionRunRow)
+            .where(ExtractionRunRow.spec_id == UUID(spec["id"]))
+            .values(model=model, input_tokens=1000, output_tokens=1000)
+        )
+
+    cost = client.get("/stats").json()["estimated_cost"]
+
+    # 0.012 for Sonnet and 0.024 for Opus; the fake-model run has no price.
+    assert cost["total_usd"] == pytest.approx(0.036)
+    assert cost["avg_per_extraction_usd"] == pytest.approx(0.018)
+    assert cost["unpriced_extractions"] == 1
+
+
+def test_remaining_never_goes_below_zero(
+    client: TestClient, fake_llm: FakeProvider
+) -> None:
+    create(client, fake_llm)
+    create(client, fake_llm)
+    app.dependency_overrides[get_daily_extraction_limit] = lambda: 1
+
+    limit = client.get("/stats").json()["daily_limit"]
+
+    assert limit == {"limit": 1, "used_last_24h": 2, "remaining": 0}
+
+
+def test_stats_never_call_the_llm(client: TestClient, fake_llm: FakeProvider) -> None:
+    client.get("/stats")
+
+    assert fake_llm.calls == []

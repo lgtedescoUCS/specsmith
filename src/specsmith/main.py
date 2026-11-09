@@ -33,6 +33,7 @@ from specsmith.llm.retry import RetryingProvider
 from specsmith.observability import RequestContextMiddleware
 from specsmith.services.extraction import ExtractionService
 from specsmith.services.specs import create_spec_from_text
+from specsmith.services.stats import Stats, compute_stats
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +267,15 @@ def health(session: SessionDep) -> JSONResponse:
             content={"status": "unavailable", "database": "unreachable"},
         )
     return JSONResponse(content={"status": "ok", "database": "ok"})
+
+
+@app.get("/stats", responses=_DATABASE_DOWN)
+def stats(session: SessionDep, daily_limit: DailyLimitDep) -> Stats:
+    """Totals over every extraction run (failures included), tokens, an
+    estimated cost from today's list prices, specs by confidence,
+    constraints by kind, and how much of the daily extraction cap is left.
+    Reads the database only; spends no tokens."""
+    return compute_stats(session, daily_limit=daily_limit)
 
 
 @app.post(

@@ -94,6 +94,53 @@ def recent_extraction_runs(session: Session, *, window: timedelta) -> RecentRuns
     return RecentRuns(count=count, oldest=oldest, now=now)
 
 
+class ModelUsage(NamedTuple):
+    """Totals over every run, successful or not, served by one model."""
+
+    model: str
+    runs: int
+    succeeded: int
+    attempts: int
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
+
+
+def run_usage_by_model(session: Session) -> list[ModelUsage]:
+    # Grouped by model because cost depends on it: prices are per model,
+    # and applying them is the caller's business, not the database's.
+    run = ExtractionRunRow
+    rows = session.execute(
+        select(
+            run.model,
+            func.count(),
+            func.count().filter(run.succeeded),
+            func.sum(run.attempts),
+            func.sum(run.input_tokens),
+            func.sum(run.output_tokens),
+            func.sum(run.latency_ms),
+        )
+        .group_by(run.model)
+        .order_by(run.model)
+    ).all()
+    return [ModelUsage(*row) for row in rows]
+
+
+def spec_counts_by_confidence(session: Session) -> dict[str, int]:
+    rows = session.execute(
+        select(SpecRow.confidence, func.count()).group_by(SpecRow.confidence)
+    ).all()
+    return {confidence: n for confidence, n in rows}
+
+
+def constraint_counts_by_kind(session: Session) -> dict[str, int]:
+    # The aggregate that normalised constraint rows make a plain GROUP BY.
+    rows = session.execute(
+        select(ConstraintItemRow.kind, func.count()).group_by(ConstraintItemRow.kind)
+    ).all()
+    return {kind: n for kind, n in rows}
+
+
 def _run_row(
     requirement: RequirementRow,
     meta: ExtractionMeta,
