@@ -45,9 +45,9 @@ class AnthropicProvider:
         client = anthropic.Anthropic(
             api_key=api_key,
             timeout=timeout_seconds,
-            # The SDK retries timeouts, 429 and 5xx by default, which would
-            # stretch a 30 s timeout to 90 s before the client gets a 504.
-            # Retrying with backoff is a deliberate phase 4 change.
+            # The SDK retries timeouts too, which would stretch a 30 s
+            # timeout to 90 s before the client gets a 504. Retries happen
+            # in RetryingProvider instead, which skips timeouts.
             max_retries=0,
         )
         return cls(client, model=model)
@@ -75,11 +75,13 @@ class AnthropicProvider:
             raise LLMTimeoutError(f"Anthropic API timed out: {exc}") from exc
         except anthropic.APIStatusError as exc:
             raise LLMUnavailableError(
-                f"Anthropic API returned {exc.status_code}: {exc.message}"
+                f"Anthropic API returned {exc.status_code}: {exc.message}",
+                retryable=_is_retryable(exc),
+                retry_after_seconds=_retry_after_seconds(exc),
             ) from exc
         except anthropic.APIConnectionError as exc:
             raise LLMUnavailableError(
-                f"Could not reach the Anthropic API: {exc}"
+                f"Could not reach the Anthropic API: {exc}", retryable=True
             ) from exc
 
         # Both stop reasons void the schema guarantee, and retrying the same
@@ -105,3 +107,35 @@ class AnthropicProvider:
             input_tokens=message.usage.input_tokens,
             output_tokens=message.usage.output_tokens,
         )
+
+
+# Statuses worth sending again, the same set the SDK retries by default:
+# request timeout, conflict, rate limit and server errors (529 overloaded
+# included). https://platform.claude.com/docs/en/api/errors
+_RETRYABLE_STATUSES = frozenset({408, 409, 429})
+
+
+def _is_retryable(exc: anthropic.APIStatusError) -> bool:
+    # The API can say so explicitly; the SDK obeys this header first too.
+    should_retry = exc.response.headers.get("x-should-retry")
+    if should_retry in ("true", "false"):
+        return should_retry == "true"
+    return exc.status_code in _RETRYABLE_STATUSES or exc.status_code >= 500
+
+
+def _retry_after_seconds(exc: anthropic.APIStatusError) -> float | None:
+    """The wait the API asked for, in seconds, or None. Reads retry-after-ms
+    first (more precise), then retry-after as a number of seconds. The HTTP
+    date form of retry-after is ignored: backoff applies instead."""
+    headers = exc.response.headers
+    for name, scale in (("retry-after-ms", 1000.0), ("retry-after", 1.0)):
+        value = headers.get(name)
+        if value is None:
+            continue
+        try:
+            seconds = float(value) / scale
+        except ValueError:
+            continue
+        if seconds >= 0:
+            return seconds
+    return None

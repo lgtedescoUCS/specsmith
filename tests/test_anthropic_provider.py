@@ -207,27 +207,75 @@ def test_connection_failure_is_unavailable_not_a_timeout() -> None:
         provider.extract("p", SPEC_DRAFT_SCHEMA)
 
     assert not isinstance(exc_info.value, LLMTimeoutError)
+    assert exc_info.value.retryable
 
 
 @pytest.mark.parametrize(
-    "status, error_type",
+    "status, error_type, retryable",
     [
-        (400, "invalid_request_error"),
-        (401, "authentication_error"),
-        (429, "rate_limit_error"),
-        (500, "api_error"),
-        (529, "overloaded_error"),
+        (400, "invalid_request_error", False),
+        (401, "authentication_error", False),
+        (403, "permission_error", False),
+        (409, "conflict_error", True),
+        (429, "rate_limit_error", True),
+        (500, "api_error", True),
+        (529, "overloaded_error", True),
     ],
 )
 def test_api_errors_mean_the_provider_is_unavailable(
-    status: int, error_type: str
+    status: int, error_type: str, retryable: bool
 ) -> None:
     provider, requests = provider_with(api_error(status, error_type, "nope"))
 
-    with pytest.raises(LLMUnavailableError, match=f"returned {status}"):
+    with pytest.raises(LLMUnavailableError, match=f"returned {status}") as exc_info:
         provider.extract("p", SPEC_DRAFT_SCHEMA)
 
+    # One request: retrying is RetryingProvider's job, not the SDK's.
     assert len(requests) == 1
+    assert exc_info.value.retryable is retryable
+    assert exc_info.value.retry_after_seconds is None
+
+
+def error_with_headers(status: int, headers: dict[str, str]) -> Handler:
+    body = {"type": "error", "error": {"type": "api_error", "message": "nope"}}
+    return lambda request: httpx2.Response(status, json=body, headers=headers)
+
+
+@pytest.mark.parametrize(
+    "headers, expected",
+    [
+        ({"retry-after": "7"}, 7.0),
+        ({"retry-after": "1.5"}, 1.5),
+        ({"retry-after-ms": "250"}, 0.25),
+        ({"retry-after-ms": "250", "retry-after": "9"}, 0.25),
+        ({"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}, None),
+        ({"retry-after": "-3"}, None),
+    ],
+)
+def test_retry_after_is_read_from_the_response(
+    headers: dict[str, str], expected: float | None
+) -> None:
+    provider, _ = provider_with(error_with_headers(429, headers))
+
+    with pytest.raises(LLMUnavailableError) as exc_info:
+        provider.extract("p", SPEC_DRAFT_SCHEMA)
+
+    assert exc_info.value.retry_after_seconds == expected
+
+
+@pytest.mark.parametrize(
+    "status, header, retryable",
+    [(500, "false", False), (400, "true", True)],
+)
+def test_x_should_retry_header_overrides_the_status(
+    status: int, header: str, retryable: bool
+) -> None:
+    provider, _ = provider_with(error_with_headers(status, {"x-should-retry": header}))
+
+    with pytest.raises(LLMUnavailableError) as exc_info:
+        provider.extract("p", SPEC_DRAFT_SCHEMA)
+
+    assert exc_info.value.retryable is retryable
 
 
 def test_error_messages_never_contain_the_api_key() -> None:

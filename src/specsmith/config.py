@@ -1,8 +1,9 @@
 """Application settings, read from environment variables or a local .env."""
 
 from functools import lru_cache
+from typing import Self
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Hosted Postgres providers hand out URLs without a driver (postgres:// or
@@ -43,6 +44,23 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30, gt=0)
     prompt_version: str = "v3"
     max_extraction_retries: int = Field(default=2, ge=0)
+    # Retries of a single LLM call after a transient upstream failure
+    # (overload, rate limit, dropped connection), with exponential backoff.
+    # Not the same as max_extraction_retries, which re-asks the model after
+    # an answer that failed validation.
+    llm_max_retries: int = Field(default=2, ge=0)
+    llm_backoff_base_seconds: float = Field(default=1, gt=0)
+    llm_backoff_max_seconds: float = Field(default=8, gt=0)
+
+    @model_validator(mode="after")
+    def _backoff_base_within_max(self) -> Self:
+        # Checked here so a bad pair fails when settings load, not on the
+        # first extraction that happens to need a retry.
+        if self.llm_backoff_base_seconds > self.llm_backoff_max_seconds:
+            raise ValueError(
+                "LLM_BACKOFF_BASE_SECONDS must not exceed LLM_BACKOFF_MAX_SECONDS"
+            )
+        return self
     # Extractions the API runs in a rolling 24 hours, across all clients,
     # so a public deployment cannot run up an open-ended token bill.
     max_extractions_per_day: int = Field(default=20, ge=1)

@@ -15,6 +15,7 @@ from specsmith.config import Settings
 from specsmith.domain.errors import LLMNotConfiguredError
 from specsmith.llm.anthropic import AnthropicProvider
 from specsmith.llm.fake import FakeProvider
+from specsmith.llm.retry import RetryingProvider
 
 LLM_ENV = (
     "ANTHROPIC_API_KEY",
@@ -23,6 +24,9 @@ LLM_ENV = (
     "PROMPT_VERSION",
     "MAX_EXTRACTION_RETRIES",
     "MAX_EXTRACTIONS_PER_DAY",
+    "LLM_MAX_RETRIES",
+    "LLM_BACKOFF_BASE_SECONDS",
+    "LLM_BACKOFF_MAX_SECONDS",
 )
 
 
@@ -54,7 +58,14 @@ def test_llm_settings_have_the_documented_defaults() -> None:
 
 
 @pytest.mark.parametrize(
-    "values", [{"max_extraction_retries": -1}, {"llm_timeout_seconds": 0}]
+    "values",
+    [
+        {"max_extraction_retries": -1},
+        {"llm_timeout_seconds": 0},
+        {"llm_max_retries": -1},
+        {"llm_backoff_base_seconds": 0},
+        {"llm_backoff_base_seconds": 10, "llm_backoff_max_seconds": 5},
+    ],
 )
 def test_out_of_range_llm_settings_are_rejected(values: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
@@ -91,10 +102,45 @@ def test_provider_is_anthropic_built_from_settings(
 
     provider = main.get_provider()
 
-    assert isinstance(provider, AnthropicProvider)
-    assert provider.model == "claude-opus-5-5"
-    assert provider._client.timeout == 12
-    assert provider._client.max_retries == 0
+    assert isinstance(provider, RetryingProvider)
+    inner = provider._inner
+    assert isinstance(inner, AnthropicProvider)
+    assert provider.model == inner.model == "claude-opus-5-5"
+    assert inner._client.timeout == 12
+    assert inner._client.max_retries == 0
+
+
+def test_provider_backoff_comes_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    use(
+        monkeypatch,
+        settings(
+            anthropic_api_key="sk-test-not-real",
+            llm_max_retries=4,
+            llm_backoff_base_seconds=0.5,
+            llm_backoff_max_seconds=3,
+        ),
+    )
+
+    provider = main.get_provider()
+
+    assert isinstance(provider, RetryingProvider)
+    assert (provider._max_retries, provider._base_delay, provider._max_delay) == (
+        4,
+        0.5,
+        3,
+    )
+
+
+def test_llm_backoff_defaults() -> None:
+    s = settings()
+
+    assert (
+        s.llm_max_retries,
+        s.llm_backoff_base_seconds,
+        s.llm_backoff_max_seconds,
+    ) == (2, 1, 8)
 
 
 def test_provider_is_built_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:

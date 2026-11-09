@@ -53,4 +53,21 @@ class LLMTimeoutError(LLMError):
 class LLMUnavailableError(LLMError):
     """The provider could not be reached or rejected the call (auth, rate
     limit, server error). A failure of the upstream service, not of the
-    model's answer to this requirement."""
+    model's answer to this requirement.
+
+    `retryable` says whether the same call may succeed if sent again later
+    (overload, rate limit, dropped connection), as opposed to failing the
+    same way every time (bad key, spend limit). `retry_after_seconds` is how
+    long the provider asked callers to wait, when it said so.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        retry_after_seconds: float | None = None,
+    ) -> None:
+        self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(message)

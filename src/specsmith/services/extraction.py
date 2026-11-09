@@ -68,8 +68,8 @@ class ExtractionService:
             try:
                 response = self._provider.extract(prompt, SPEC_DRAFT_SCHEMA)
             # Provider failures are not retried here: a timeout or a refusal
-            # would most likely repeat. Backoff for transient errors is a
-            # provider concern (phase 4).
+            # would most likely repeat, and transient upstream errors were
+            # already retried with backoff (llm.retry.RetryingProvider).
             except LLMTimeoutError as exc:
                 raise ExtractionTimeoutError(
                     f"LLM timed out: {exc}", meta(), tuple(rejected)

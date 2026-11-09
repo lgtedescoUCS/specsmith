@@ -23,6 +23,7 @@ from specsmith.domain.models import StoredSpec
 from specsmith.llm.anthropic import AnthropicProvider
 from specsmith.llm.base import LLMProvider
 from specsmith.llm.prompts import load_prompt
+from specsmith.llm.retry import RetryingProvider
 from specsmith.services.extraction import ExtractionService
 from specsmith.services.specs import create_spec_from_text
 
@@ -51,10 +52,15 @@ def get_provider() -> LLMProvider:
     settings = get_settings()
     if settings.anthropic_api_key is None:
         raise LLMNotConfiguredError()
-    return AnthropicProvider.create(
-        api_key=settings.anthropic_api_key.get_secret_value(),
-        model=settings.llm_model,
-        timeout_seconds=settings.llm_timeout_seconds,
+    return RetryingProvider(
+        AnthropicProvider.create(
+            api_key=settings.anthropic_api_key.get_secret_value(),
+            model=settings.llm_model,
+            timeout_seconds=settings.llm_timeout_seconds,
+        ),
+        max_retries=settings.llm_max_retries,
+        base_delay_seconds=settings.llm_backoff_base_seconds,
+        max_delay_seconds=settings.llm_backoff_max_seconds,
     )
 
 
