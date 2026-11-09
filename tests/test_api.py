@@ -4,6 +4,7 @@ The LLM is the FakeProvider injected by conftest (`fake_llm`).
 """
 
 import json
+import logging
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -335,3 +336,44 @@ def test_retry_after_counts_down_from_the_oldest_run_in_the_window(
 
     assert response.status_code == 429
     assert response.headers["Retry-After"] == "3600"
+
+
+# --- logging ---------------------------------------------------------------
+
+
+def extraction_records(caplog: pytest.LogCaptureFixture) -> list[Any]:
+    return [r for r in caplog.records if getattr(r, "event", None) == "extraction"]
+
+
+def test_successful_extraction_is_logged_without_the_raw_text(
+    client: TestClient, fake_llm: FakeProvider, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_llm.queue(VALID_ANSWER)
+
+    with caplog.at_level(logging.INFO, logger="specsmith"):
+        body = client.post("/specs", json=payload()).json()
+
+    [rec] = extraction_records(caplog)
+    assert rec.levelno == logging.INFO
+    assert (rec.succeeded, rec.spec_id, rec.attempts) == (True, UUID(body["id"]), 1)
+    assert (rec.model, rec.prompt_version) == ("fake-model", "v1")
+    assert (rec.input_tokens, rec.output_tokens) == (100, 50)
+    assert all(RAW_TEXT not in str(value) for value in vars(rec).values())
+
+
+def test_failed_extraction_is_logged_with_its_run_id(
+    client: TestClient,
+    fake_llm: FakeProvider,
+    connection: Connection,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake_llm.queue(LLMTimeoutError("took too long"))
+
+    with caplog.at_level(logging.INFO, logger="specsmith"):
+        client.post("/specs", json=payload())
+
+    [rec] = extraction_records(caplog)
+    assert rec.levelno == logging.WARNING
+    assert (rec.succeeded, rec.error_type) == (False, "ExtractionTimeoutError")
+    assert rec.run_id == only_run(connection).id
+    assert all(RAW_TEXT not in str(value) for value in vars(rec).values())

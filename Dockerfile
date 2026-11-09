@@ -39,7 +39,7 @@ COPY --from=builder /app/.venv ./.venv
 COPY src ./src
 COPY prompts ./prompts
 COPY migrations ./migrations
-COPY alembic.ini ./
+COPY alembic.ini log_config.json ./
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
@@ -51,4 +51,6 @@ USER app
 # a single instance there is no race between two upgrades. A failed
 # migration stops the start, so the old deploy keeps serving.
 EXPOSE 10000
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn specsmith.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
+# log_config.json makes every log line, uvicorn's included, one JSON object
+# on stdout; the app logs its own access line, with the request id.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn specsmith.main:app --host 0.0.0.0 --port ${PORT:-10000} --log-config log_config.json"]

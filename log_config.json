@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "json": {"()": "specsmith.observability.JsonFormatter"}
+  },
+  "handlers": {
+    "stdout": {
+      "class": "logging.StreamHandler",
+      "formatter": "json",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "loggers": {
+    "uvicorn.access": {"level": "WARNING", "handlers": [], "propagate": false}
+  },
+  "root": {"level": "INFO", "handlers": ["stdout"]}
+}

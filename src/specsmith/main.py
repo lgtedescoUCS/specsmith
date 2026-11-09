@@ -24,6 +24,7 @@ from specsmith.llm.anthropic import AnthropicProvider
 from specsmith.llm.base import LLMProvider
 from specsmith.llm.prompts import load_prompt
 from specsmith.llm.retry import RetryingProvider
+from specsmith.observability import RequestContextMiddleware
 from specsmith.services.extraction import ExtractionService
 from specsmith.services.specs import create_spec_from_text
 
@@ -35,6 +36,8 @@ app = FastAPI(
     ),
     version="0.1.0",
 )
+# Request id and one access log line per request (see log_config.json).
+app.add_middleware(RequestContextMiddleware)
 
 # scope="function" makes FastAPI run the code after get_session's yield
 # (the commit) before sending the response. With the default "request"
