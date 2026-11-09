@@ -18,8 +18,8 @@ from specsmith.db.models import (
     RequirementRow,
     SpecRow,
 )
-from specsmith.domain.errors import SpecNotFoundError
-from specsmith.domain.models import ExtractionMeta, Spec, StoredSpec
+from specsmith.domain.errors import RunNotFoundError, SpecNotFoundError
+from specsmith.domain.models import ExtractionMeta, Spec, StoredRun, StoredSpec
 
 
 def save_spec(
@@ -132,6 +132,35 @@ def get_spec(session: Session, spec_id: UUID) -> StoredSpec:
     if row is None:
         raise SpecNotFoundError(spec_id)
     return _to_domain(row)
+
+
+def get_run_for_spec(session: Session, spec_id: UUID) -> StoredRun:
+    """The run that produced the spec. Raises SpecNotFoundError when there
+    is no such spec, RunNotFoundError when the spec has no run."""
+    run = session.scalars(
+        select(ExtractionRunRow).where(ExtractionRunRow.spec_id == spec_id)
+    ).one_or_none()
+    if run is not None:
+        return _run_to_domain(run)
+    if session.get(SpecRow, spec_id) is None:
+        raise SpecNotFoundError(spec_id)
+    raise RunNotFoundError(spec_id)
+
+
+def _run_to_domain(row: ExtractionRunRow) -> StoredRun:
+    return StoredRun(
+        id=row.id,
+        requirement_id=row.requirement_id,
+        spec_id=row.spec_id,
+        succeeded=row.succeeded,
+        created_at=row.created_at,
+        model=row.model,
+        prompt_version=row.prompt_version,
+        input_tokens=row.input_tokens,
+        output_tokens=row.output_tokens,
+        latency_ms=row.latency_ms,
+        attempts=row.attempts,
+    )
 
 
 def _to_domain(row: SpecRow) -> StoredSpec:

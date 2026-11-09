@@ -21,9 +21,11 @@ from specsmith.domain.errors import (
     ExtractionTimeoutError,
     ExtractionUpstreamError,
     LLMNotConfiguredError,
+    RunNotFoundError,
     SpecNotFoundError,
 )
-from specsmith.domain.models import StoredSpec
+from specsmith.domain.models import StoredRun, StoredSpec
+from specsmith.domain.pricing import estimate_cost
 from specsmith.llm.anthropic import AnthropicProvider
 from specsmith.llm.base import LLMProvider
 from specsmith.llm.prompts import load_prompt
@@ -121,6 +123,12 @@ DailyLimitDep = Annotated[int, Depends(get_daily_extraction_limit)]
 RAW_TEXT_MAX_LENGTH = 20_000
 
 
+class SpecRunResponse(StoredRun):
+    # From list prices at the time of the request, not of the run; None
+    # when the model has no known price.
+    estimated_cost_usd: float | None
+
+
 class CreateSpecRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -128,11 +136,14 @@ class CreateSpecRequest(BaseModel):
     source: str | None = Field(default=None, max_length=80)
 
 
-@app.exception_handler(SpecNotFoundError)
-def spec_not_found(request: Request, exc: SpecNotFoundError) -> JSONResponse:
+def not_found(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)}
     )
+
+
+for _error_type in (SpecNotFoundError, RunNotFoundError):
+    app.add_exception_handler(_error_type, not_found)
 
 
 # Each extraction error has its own status; the failed run is already
@@ -270,3 +281,17 @@ def create_spec(
 )
 def read_spec(spec_id: UUID, session: SessionDep) -> StoredSpec:
     return repository.get_spec(session, spec_id)
+
+
+@app.get(
+    "/specs/{spec_id}/run",
+    responses={404: {"description": "No such spec, or it has no extraction run"}}
+    | _DATABASE_DOWN,
+)
+def read_spec_run(spec_id: UUID, session: SessionDep) -> SpecRunResponse:
+    """How the spec was extracted: model, prompt version, tokens, latency,
+    attempts and an estimated cost."""
+    run = repository.get_run_for_spec(session, spec_id)
+    return SpecRunResponse(
+        **run.model_dump(), estimated_cost_usd=estimate_cost(run)
+    )

@@ -20,6 +20,15 @@ class SpecNotFoundError(DomainError):
         super().__init__(f"Spec {spec_id} not found")
 
 
+class RunNotFoundError(DomainError):
+    """The spec exists but no extraction run produced it (it was stored
+    ready-made, before extraction from raw text existed)."""
+
+    def __init__(self, spec_id: UUID) -> None:
+        self.spec_id = spec_id
+        super().__init__(f"Spec {spec_id} has no extraction run")
+
+
 class ExtractionError(DomainError):
     """An extraction that did not produce a spec.
 

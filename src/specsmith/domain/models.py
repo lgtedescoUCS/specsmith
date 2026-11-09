@@ -92,3 +92,14 @@ class StoredSpec(Spec):
     id: UUID
     requirement_id: UUID
     created_at: datetime
+
+
+class StoredRun(ExtractionMeta):
+    """A recorded extraction run. A run that produced a spec always
+    succeeded; failed runs have spec_id None."""
+
+    id: UUID
+    requirement_id: UUID
+    spec_id: UUID | None
+    succeeded: bool
+    created_at: datetime
