@@ -9,7 +9,10 @@ from specsmith.db.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: the test suite runs migrations in its
+    # own process, and the default would silence every logger the app had
+    # already created (so caplog would see nothing from them).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
