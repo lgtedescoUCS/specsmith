@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
@@ -5,6 +6,7 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.orm import Session
 
 from specsmith.config import get_settings
@@ -36,8 +38,11 @@ app = FastAPI(
     ),
     version="0.1.0",
 )
-# Request id and one access log line per request (see log_config.json).
+# Request id, one access log line per request (see log_config.json), and
+# a JSON 500 for any exception no handler below takes.
 app.add_middleware(RequestContextMiddleware)
+
+logger = logging.getLogger(__name__)
 
 # scope="function" makes FastAPI run the code after get_session's yield
 # (the commit) before sending the response. With the default "request"
@@ -140,6 +145,29 @@ for _error_type in _EXTRACTION_RESPONSES:
     app.add_exception_handler(_error_type, extraction_error)
 
 
+def database_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    # Connection refused, dropped or timed out, at query or at commit time
+    # (the commit runs inside the request, see SessionDep). 503 like
+    # /health: the app is up but cannot serve this request now. The cause
+    # (host, driver message) goes to the log only.
+    logger.error(
+        "database unavailable",
+        exc_info=exc,
+        extra={"event": "database_unavailable", "error_type": type(exc).__name__},
+    )
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Database unavailable"},
+    )
+
+
+# Only errors that mean the database cannot be reached. Anything else from
+# SQLAlchemy (an IntegrityError, say) is a bug and becomes a logged 500 in
+# RequestContextMiddleware.
+for _error_type in (OperationalError, InterfaceError):
+    app.add_exception_handler(_error_type, database_unavailable)
+
+
 @app.exception_handler(LLMNotConfiguredError)
 def llm_not_configured(request: Request, exc: LLMNotConfiguredError) -> JSONResponse:
     return JSONResponse(
@@ -162,9 +190,10 @@ _ERROR_RESPONSES = {
     422: {"description": "The LLM output never passed validation"},
     429: {"description": "The daily extraction limit was reached; see Retry-After"},
     502: {"description": "The LLM provider is unreachable or rejected the call"},
-    503: {"description": "No LLM provider is configured"},
+    503: {"description": "No LLM provider is configured, or the database is down"},
     504: {"description": "The LLM did not answer in time"},
 }
+_DATABASE_DOWN = {503: {"description": "The database is unavailable"}}
 
 
 # The bare URL of the deployment opens the interactive docs. Kept out of the
@@ -211,6 +240,9 @@ def create_spec(
     )
 
 
-@app.get("/specs/{spec_id}")
+@app.get(
+    "/specs/{spec_id}",
+    responses={404: {"description": "No spec with this id"}} | _DATABASE_DOWN,
+)
 def read_spec(spec_id: UUID, session: SessionDep) -> StoredSpec:
     return repository.get_spec(session, spec_id)

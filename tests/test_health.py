@@ -1,27 +1,10 @@
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from specsmith.config import get_settings
 from specsmith.db import session as db_session_module
 from specsmith.main import app
-
-
-@pytest.fixture
-def fresh_db_config(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Build settings, engine and session factory from scratch for one test."""
-    caches = (
-        get_settings,
-        db_session_module.get_engine,
-        db_session_module.get_sessionmaker,
-    )
-    for cached in caches:
-        cached.cache_clear()
-    yield
-    for cached in caches:
-        cached.cache_clear()
 
 
 def test_health_reports_ok_when_database_is_reachable(client: TestClient) -> None:

@@ -25,6 +25,7 @@ from sqlalchemy import Connection, Engine, create_engine, make_url, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+from specsmith.config import get_settings
 from specsmith.db import session as db_session_module
 from specsmith.llm.fake import FakeProvider
 from specsmith.llm.prompts import load_prompt
@@ -140,3 +141,19 @@ def daily_limit() -> Iterator[None]:
     app.dependency_overrides[get_daily_extraction_limit] = lambda: TEST_DAILY_LIMIT
     yield
     app.dependency_overrides.pop(get_daily_extraction_limit, None)
+
+
+@pytest.fixture
+def fresh_db_config(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Build settings, engine and session factory from scratch for one test,
+    so it can point the real engine somewhere else through the environment."""
+    caches = (
+        get_settings,
+        db_session_module.get_engine,
+        db_session_module.get_sessionmaker,
+    )
+    for cached in caches:
+        cached.cache_clear()
+    yield
+    for cached in caches:
+        cached.cache_clear()

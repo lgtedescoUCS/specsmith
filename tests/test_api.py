@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Connection, event, func, select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from specsmith.db.models import ExtractionRunRow, RequirementRow, SpecRow
@@ -256,13 +257,58 @@ def test_failed_commit_is_an_error_not_a_201(
     fake_llm.queue(VALID_ANSWER)
     event.listen(Session, "before_commit", failing_commit)
     try:
-        client = TestClient(app, raise_server_exceptions=False)
+        response = TestClient(app).post("/specs", json=payload())
+    finally:
+        event.remove(Session, "before_commit", failing_commit)
+
+    # An unexpected error: a JSON 500 that names the request, nothing more.
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Internal server error",
+        "request_id": response.headers["x-request-id"],
+    }
+    assert count(connection, RequirementRow) == 0
+
+
+def lost_connection(statement: str) -> OperationalError:
+    return OperationalError(statement, {}, Exception("server closed the connection"))
+
+
+def test_commit_on_a_lost_database_connection_returns_503(
+    client: TestClient, connection: Connection, fake_llm: FakeProvider
+) -> None:
+    def failing_commit(session: Session) -> None:
+        raise lost_connection("COMMIT")
+
+    fake_llm.queue(VALID_ANSWER)
+    event.listen(Session, "before_commit", failing_commit)
+    try:
         response = client.post("/specs", json=payload())
     finally:
         event.remove(Session, "before_commit", failing_commit)
 
-    assert response.status_code == 500
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Database unavailable"}
     assert count(connection, RequirementRow) == 0
+
+
+def test_lost_connection_while_recording_a_failed_run_returns_503(
+    client: TestClient, connection: Connection, fake_llm: FakeProvider
+) -> None:
+    # The failed run's commit is the one that breaks: the client gets the
+    # database error, not a 504 that claims the failure was recorded.
+    def failing_commit(session: Session) -> None:
+        raise lost_connection("COMMIT")
+
+    fake_llm.queue(LLMTimeoutError("took too long"))
+    event.listen(Session, "before_commit", failing_commit)
+    try:
+        response = client.post("/specs", json=payload())
+    finally:
+        event.remove(Session, "before_commit", failing_commit)
+
+    assert response.status_code == 503
+    assert count(connection, ExtractionRunRow) == 0
 
 
 # --- daily extraction cap ----------------------------------------------------

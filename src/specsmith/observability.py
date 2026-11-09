@@ -80,7 +80,8 @@ def _incoming_request_id(scope: Scope) -> str | None:
 
 class RequestContextMiddleware:
     """Assigns the request id, returns it in X-Request-ID and logs one line
-    per request (method, path, status, duration).
+    per request (method, path, status, duration). Also the last line of
+    defence: an exception no handler took becomes a logged JSON 500.
 
     A pure ASGI middleware, not @app.middleware("http"): it adds the header
     to every response, including those built by exception handlers, without
@@ -99,12 +100,14 @@ class RequestContextMiddleware:
         request_id = _incoming_request_id(scope) or uuid.uuid4().hex
         request_id_var.set(request_id)
         status_code = 500
+        response_started = False
         started = time.perf_counter()
 
         async def send_with_id(message: Message) -> None:
-            nonlocal status_code
+            nonlocal status_code, response_started
             if message["type"] == "http.response.start":
                 status_code = message["status"]
+                response_started = True
                 headers = list(message.get("headers", []))
                 headers.append((REQUEST_ID_HEADER.encode(), request_id.encode()))
                 message = {**message, "headers": headers}
@@ -112,6 +115,27 @@ class RequestContextMiddleware:
 
         try:
             await self.app(scope, receive, send_with_id)
+        except Exception:
+            # Every known failure has its own handler and status. Reaching
+            # here is a bug: log the traceback and answer a JSON 500 that
+            # carries the request id, so the report and the log line meet.
+            # Nothing about the error goes to the client.
+            request_logger.exception(
+                "unhandled error", extra={"event": "unhandled_error"}
+            )
+            if response_started:
+                raise
+            await send_with_id(
+                {
+                    "type": "http.response.start",
+                    "status": 500,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            body = {"detail": "Internal server error", "request_id": request_id}
+            await send_with_id(
+                {"type": "http.response.body", "body": json.dumps(body).encode()}
+            )
         finally:
             # Path only, not the query string, and never the body: requests
             # carry client requirement text, which stays in the database.
