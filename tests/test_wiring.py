@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from specsmith import main
@@ -15,6 +16,7 @@ from specsmith.config import Settings
 from specsmith.domain.errors import LLMNotConfiguredError
 from specsmith.llm.anthropic import AnthropicProvider
 from specsmith.llm.fake import FakeProvider
+from specsmith.llm.prompts import PromptNotFoundError
 from specsmith.llm.retry import RetryingProvider
 
 LLM_ENV = (
@@ -175,3 +177,41 @@ def test_daily_extraction_limit_defaults_to_20_and_comes_from_settings(
 def test_daily_extraction_limit_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         settings(max_extractions_per_day=0)
+
+
+# --- startup -------------------------------------------------------------
+# `with TestClient(app)` runs the lifespan; the rest of the suite does not.
+
+
+def test_startup_loads_the_configured_prompt(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    use(monkeypatch, settings(prompt_version="v2"))
+
+    with caplog.at_level("INFO", logger="specsmith.main"), TestClient(main.app):
+        pass
+
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "startup"]
+    assert record.prompt_version == "v2"  # type: ignore[attr-defined]
+    assert record.llm_configured is False  # type: ignore[attr-defined]
+
+
+def test_startup_fails_on_a_prompt_version_with_no_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    use(monkeypatch, settings(prompt_version="v99"))
+
+    with pytest.raises(PromptNotFoundError), TestClient(main.app):
+        pass
+
+
+def test_startup_log_never_contains_the_api_key(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    use(monkeypatch, settings(anthropic_api_key="sk-test-not-real"))
+
+    with caplog.at_level("INFO", logger="specsmith.main"), TestClient(main.app):
+        pass
+
+    assert "sk-test-not-real" not in caplog.text
+    assert all("sk-test-not-real" not in str(vars(r)) for r in caplog.records)

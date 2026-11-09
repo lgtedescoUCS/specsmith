@@ -1,4 +1,6 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
@@ -30,7 +32,31 @@ from specsmith.observability import RequestContextMiddleware
 from specsmith.services.extraction import ExtractionService
 from specsmith.services.specs import create_spec_from_text
 
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Settings and the configured prompt load once at startup, so a missing
+    # DATABASE_URL or a PROMPT_VERSION with no file stops the process here,
+    # and the previous deploy keeps serving, instead of the first extraction
+    # failing with a 500. Nothing connects to the database or the LLM.
+    settings = get_settings()
+    prompt = load_prompt(settings.prompt_version)
+    logger.info(
+        "startup",
+        extra={
+            "event": "startup",
+            "model": settings.llm_model,
+            "prompt_version": prompt.version,
+            "llm_configured": settings.anthropic_api_key is not None,
+        },
+    )
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Specsmith",
     description=(
         "Turns free-form client requirements into validated, "
@@ -41,8 +67,6 @@ app = FastAPI(
 # Request id, one access log line per request (see log_config.json), and
 # a JSON 500 for any exception no handler below takes.
 app.add_middleware(RequestContextMiddleware)
-
-logger = logging.getLogger(__name__)
 
 # scope="function" makes FastAPI run the code after get_session's yield
 # (the commit) before sending the response. With the default "request"
