@@ -58,8 +58,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+# Groups for the interactive docs, in this order. Without tags every
+# route lands under "default".
+SPECS_TAG = "specs"
+SYSTEM_TAG = "system"
+OPENAPI_TAGS = [
+    {
+        "name": SPECS_TAG,
+        "description": "Extract specifications from raw text and read them back. "
+        "Only POST /specs calls the LLM.",
+    },
+    {
+        "name": SYSTEM_TAG,
+        "description": "Health and usage of this deployment. No LLM calls.",
+    },
+]
+
 app = FastAPI(
     lifespan=lifespan,
+    openapi_tags=OPENAPI_TAGS,
     title="Specsmith",
     description=(
         "Turns free-form client requirements into validated, "
@@ -143,8 +160,25 @@ class SpecListResponse(BaseModel):
     offset: int
 
 
+# The sample requirement from the project guide, in Portuguese as a client
+# would write it. It prefills "Try it out" in /docs; running it is a real
+# extraction and counts toward the daily cap.
+EXAMPLE_RAW_TEXT = (
+    "O cliente quer aumentar a produção da linha de têmpera. Hoje processam "
+    "400 chapas por dia e precisam chegar a 650. O forno atual é de 2007. "
+    "Tem 12 metros de espaço disponível. Orçamento aproximado de 1.2 milhão "
+    "de dólares. Precisam estar operando até março."
+)
+
+
 class CreateSpecRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        json_schema_extra={
+            "examples": [{"raw_text": EXAMPLE_RAW_TEXT, "source": "docs-example"}]
+        },
+    )
 
     raw_text: str = Field(min_length=1, max_length=RAW_TEXT_MAX_LENGTH)
     source: str | None = Field(default=None, max_length=80)
@@ -255,6 +289,7 @@ def root() -> RedirectResponse:
 
 @app.get(
     "/health",
+    tags=[SYSTEM_TAG],
     responses={503: {"description": "The database is not reachable"}},
 )
 def health(session: SessionDep) -> JSONResponse:
@@ -269,7 +304,7 @@ def health(session: SessionDep) -> JSONResponse:
     return JSONResponse(content={"status": "ok", "database": "ok"})
 
 
-@app.get("/stats", responses=_DATABASE_DOWN)
+@app.get("/stats", tags=[SYSTEM_TAG], responses=_DATABASE_DOWN)
 def stats(session: SessionDep, daily_limit: DailyLimitDep) -> Stats:
     """Totals over every extraction run (failures included), tokens, an
     estimated cost from today's list prices, specs by confidence,
@@ -280,6 +315,7 @@ def stats(session: SessionDep, daily_limit: DailyLimitDep) -> Stats:
 
 @app.post(
     "/specs",
+    tags=[SPECS_TAG],
     status_code=status.HTTP_201_CREATED,
     responses=_ERROR_RESPONSES,
 )
@@ -298,7 +334,7 @@ def create_spec(
     )
 
 
-@app.get("/specs", responses=_DATABASE_DOWN)
+@app.get("/specs", tags=[SPECS_TAG], responses=_DATABASE_DOWN)
 def list_specs(
     session: SessionDep,
     confidence: Confidence | None = None,
@@ -318,6 +354,7 @@ def list_specs(
 
 @app.get(
     "/specs/{spec_id}",
+    tags=[SPECS_TAG],
     responses={404: {"description": "No spec with this id"}} | _DATABASE_DOWN,
 )
 def read_spec(spec_id: UUID, session: SessionDep) -> StoredSpec:
@@ -326,6 +363,7 @@ def read_spec(spec_id: UUID, session: SessionDep) -> StoredSpec:
 
 @app.get(
     "/specs/{spec_id}/run",
+    tags=[SPECS_TAG],
     responses={404: {"description": "No such spec, or it has no extraction run"}}
     | _DATABASE_DOWN,
 )
