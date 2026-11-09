@@ -19,7 +19,13 @@ from specsmith.db.models import (
     SpecRow,
 )
 from specsmith.domain.errors import RunNotFoundError, SpecNotFoundError
-from specsmith.domain.models import ExtractionMeta, Spec, StoredRun, StoredSpec
+from specsmith.domain.models import (
+    Confidence,
+    ExtractionMeta,
+    Spec,
+    StoredRun,
+    StoredSpec,
+)
 
 
 def save_spec(
@@ -132,6 +138,33 @@ def get_spec(session: Session, spec_id: UUID) -> StoredSpec:
     if row is None:
         raise SpecNotFoundError(spec_id)
     return _to_domain(row)
+
+
+class SpecPage(NamedTuple):
+    items: list[StoredSpec]
+    # Matching specs across all pages, for the client to know when to stop.
+    total: int
+
+
+def list_specs(
+    session: Session,
+    *,
+    confidence: Confidence | None,
+    limit: int,
+    offset: int,
+) -> SpecPage:
+    """Newest first. id breaks ties in created_at (rows inserted in one
+    transaction share now()), so pages never overlap or skip a spec."""
+    filters = [] if confidence is None else [SpecRow.confidence == confidence.value]
+    total = session.scalar(select(func.count()).select_from(SpecRow).where(*filters))
+    rows = session.scalars(
+        select(SpecRow)
+        .where(*filters)
+        .order_by(SpecRow.created_at.desc(), SpecRow.id.desc())
+        .limit(limit)
+        .offset(offset)
+    ).all()
+    return SpecPage(items=[_to_domain(row) for row in rows], total=total or 0)
 
 
 def get_run_for_spec(session: Session, spec_id: UUID) -> StoredRun:

@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Request, status
+from fastapi import Depends, FastAPI, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import InterfaceError, OperationalError
@@ -24,7 +24,7 @@ from specsmith.domain.errors import (
     RunNotFoundError,
     SpecNotFoundError,
 )
-from specsmith.domain.models import StoredRun, StoredSpec
+from specsmith.domain.models import Confidence, StoredRun, StoredSpec
 from specsmith.domain.pricing import estimate_cost
 from specsmith.llm.anthropic import AnthropicProvider
 from specsmith.llm.base import LLMProvider
@@ -127,6 +127,19 @@ class SpecRunResponse(StoredRun):
     # From list prices at the time of the request, not of the run; None
     # when the model has no known price.
     estimated_cost_usd: float | None
+
+
+# Page size for GET /specs. Each spec comes with its constraints and open
+# questions, so the cap keeps one page a bounded amount of work.
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
+
+
+class SpecListResponse(BaseModel):
+    items: list[StoredSpec]
+    total: int
+    limit: int
+    offset: int
 
 
 class CreateSpecRequest(BaseModel):
@@ -272,6 +285,24 @@ def create_spec(
         raw_text=body.raw_text,
         source=body.source,
         daily_limit=daily_limit,
+    )
+
+
+@app.get("/specs", responses=_DATABASE_DOWN)
+def list_specs(
+    session: SessionDep,
+    confidence: Confidence | None = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> SpecListResponse:
+    """Stored specs, newest first, optionally only those with the given
+    confidence. Page with `limit` and `offset`; `total` counts every
+    matching spec."""
+    page = repository.list_specs(
+        session, confidence=confidence, limit=limit, offset=offset
+    )
+    return SpecListResponse(
+        items=page.items, total=page.total, limit=limit, offset=offset
     )
 
 
