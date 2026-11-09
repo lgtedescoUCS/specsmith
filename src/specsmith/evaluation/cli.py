@@ -14,6 +14,7 @@ from typing import Any
 
 from specsmith.config import Settings, get_settings
 from specsmith.domain.errors import LLMNotConfiguredError
+from specsmith.domain.pricing import estimate_cost
 from specsmith.evaluation.dataset import DatasetError, EvalCase, load_dataset
 from specsmith.evaluation.runner import (
     TABLE_HEADER,
@@ -21,7 +22,6 @@ from specsmith.evaluation.runner import (
     ReportMismatchError,
     UnannotatedCasesError,
     build_report,
-    estimate_cost,
     require_annotated,
     rescore,
     run_cases,

@@ -19,6 +19,7 @@ from typing import Any
 
 from specsmith.domain.errors import ExtractionError
 from specsmith.domain.models import ExtractionMeta, RejectedAttempt, Spec
+from specsmith.domain.pricing import estimate_cost
 from specsmith.evaluation.dataset import EvalCase
 from specsmith.evaluation.scoring import CaseScore, Summary, score_case, summarize
 from specsmith.services.extraction import ExtractionService
@@ -27,16 +28,6 @@ from specsmith.services.extraction import ExtractionService
 # none).
 REPORT_FORMAT = 2
 _READABLE_FORMATS = {1, 2}
-
-# USD per million tokens (input, output), standard Messages API requests.
-# Checked on 2026-11-06 at
-# https://platform.claude.com/docs/en/about-claude/pricing
-# A model missing here gets no cost estimate rather than a wrong one.
-PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
-    "claude-sonnet-5-5": (2.0, 10.0),
-    "claude-opus-5-5": (4.0, 20.0),
-}
-
 
 class UnannotatedCasesError(ValueError):
     """Real runs need every selected case annotated.
@@ -61,14 +52,6 @@ def require_annotated(cases: Sequence[EvalCase]) -> None:
     missing = [case.id for case in cases if not case.annotated]
     if missing:
         raise UnannotatedCasesError(missing)
-
-
-def estimate_cost(meta: ExtractionMeta) -> float | None:
-    prices = PRICES_PER_MTOK.get(meta.model)
-    if prices is None:
-        return None
-    input_price, output_price = prices
-    return (meta.input_tokens * input_price + meta.output_tokens * output_price) / 1e6
 
 
 @dataclass(frozen=True)

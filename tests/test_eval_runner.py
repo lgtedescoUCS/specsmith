@@ -13,7 +13,6 @@ from typing import Any
 import pytest
 
 from specsmith.config import Settings
-from specsmith.domain.models import ExtractionMeta
 from specsmith.evaluation.cli import main, write_report
 from specsmith.evaluation.dataset import EvalCase, load_dataset
 from specsmith.evaluation.runner import (
@@ -21,7 +20,6 @@ from specsmith.evaluation.runner import (
     ReportMismatchError,
     UnannotatedCasesError,
     build_report,
-    estimate_cost,
     rescore,
     run_cases,
     table_row,
@@ -190,23 +188,6 @@ def test_rescore_reads_format_1_reports_without_rejected_attempts(
 
     # Format 1 never stored them, so the rescored report has none either.
     assert [c["rejected_attempts"] for c in again["cases"]] == [[], []]
-
-
-@pytest.mark.parametrize(
-    ("model", "cost"),
-    [("claude-sonnet-5-5", 0.012), ("claude-opus-5-5", 0.024), ("other", None)],
-)
-def test_estimate_cost(model: str, cost: float | None) -> None:
-    meta = ExtractionMeta(
-        model=model,
-        prompt_version="v1",
-        input_tokens=1000,
-        output_tokens=1000,
-        latency_ms=1,
-        attempts=1,
-    )
-
-    assert estimate_cost(meta) == (None if cost is None else pytest.approx(cost))
 
 
 def make_report(dataset: Path) -> dict[str, Any]:
