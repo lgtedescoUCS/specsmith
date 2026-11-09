@@ -10,8 +10,61 @@ takes about a minute while the service wakes up. Extractions are capped
 at 20 per 24 hours across all users; past that, `POST /specs` answers
 429 with a `Retry-After` header.
 
-> Work in progress. `POST /specs` extracts a specification from raw text
-> and `GET /specs/{id}` returns it; listing and stats endpoints come later.
+## API
+
+| Method | Route | Description |
+|---|---|---|
+| POST | `/specs` | Extract a specification from `{"raw_text": "...", "source": "..."}` and store it |
+| GET | `/specs` | List stored specs, newest first: `?confidence=low\|medium\|high&limit=20&offset=0` (limit up to 100) |
+| GET | `/specs/{id}` | One specification |
+| GET | `/specs/{id}/run` | How it was extracted: model, prompt version, tokens, latency, attempts, estimated cost |
+| GET | `/stats` | Runs, success rate, tokens, estimated cost, specs by confidence, constraints by kind, daily cap left |
+| GET | `/health` | Application and database health |
+
+Full interactive documentation at `/docs`. Only `POST /specs` calls the
+LLM; every other route reads the database and spends no tokens.
+
+### Errors
+
+Every failure has its own status and a JSON body; none of them is a
+generic 500.
+
+| Status | When |
+|---|---|
+| 404 | No spec with that id, or the spec has no extraction run |
+| 422 | Invalid request, or the LLM output never passed validation (the body has the reason) |
+| 429 | Daily extraction cap reached; see `Retry-After` |
+| 502 | The LLM provider is unreachable or rejected the call |
+| 503 | No LLM key is configured, or the database is unavailable |
+| 504 | The LLM did not answer within `LLM_TIMEOUT_SECONDS` |
+
+Anything else is a bug: it is logged with its traceback and answered
+with a 500 whose body holds only the request id.
+
+### Reliability and logs
+
+- **Backoff on transient LLM failures.** Overload (529), rate limits
+  (429), other 5xx and dropped connections are retried up to
+  `LLM_MAX_RETRIES` times. The wait starts at `LLM_BACKOFF_BASE_SECONDS`
+  and doubles each time (1 s, then 2 s by default), capped at
+  `LLM_BACKOFF_MAX_SECONDS` and shortened by up to 25% of jitter, unless
+  the API's `retry-after` asks for a wait that fits under the cap; a
+  longer one fails at once. Timeouts are not retried, so a slow model
+  costs the client one timeout, not three. A bad key or a spend limit
+  fails at once.
+- **Two retry loops, kept apart.** The one above resends the same call.
+  `MAX_EXTRACTION_RETRIES` is the other: it asks the model again, with
+  the validation errors, when its answer does not fit the schema.
+- **Structured logs.** In the container, every line from the app and
+  uvicorn is one JSON object on stdout (`log_config.json`, passed to
+  uvicorn); only the migration step before it logs plain text. Each
+  request gets an id, returned in `X-Request-ID` (a plain one sent by
+  the client is kept), and every line logged while serving it carries
+  that id. Each extraction logs its model, prompt version, attempts,
+  tokens and latency, with the spec id or the failed run's id.
+  Requirement text never goes to the logs.
+- **Fails at startup, not at the first request,** when `DATABASE_URL`
+  is missing or `PROMPT_VERSION` names a prompt that does not exist.
 
 ## Evaluation
 
@@ -84,8 +137,10 @@ score, token usage and every answer rejected by validation.
   clean, so differences of that size between versions are within noise.
 - **No human review step.** The output is a first pass, not a
   specification anyone should quote from unreviewed.
-- **Hardcoded prices.** Cost estimates use per-token prices checked on
-  2026-11-06 and will drift when the provider changes them.
+- **Hardcoded prices.** Cost estimates, in the eval reports, `/stats`
+  and `/specs/{id}/run`, use per-token prices checked on 2026-11-06 and
+  applied to stored token counts. They drift when the provider changes
+  its prices, and past runs are priced at today's rates.
 
 ## Running locally
 
@@ -103,7 +158,8 @@ uv run alembic upgrade head
 uv run uvicorn specsmith.main:app --reload
 ```
 
-Open http://localhost:8000/docs
+Open http://localhost:8000/docs. Add `--log-config log_config.json` to
+get the JSON log lines the container writes.
 
 The database is published on host port 5433 rather than 5432, so it does
 not clash with a PostgreSQL server already installed on the machine.
@@ -127,7 +183,8 @@ plans. Render auto-deploys every push to `main`.
 
 The image is built from the multi-stage `Dockerfile`. On every start the
 container runs `alembic upgrade head` and then uvicorn on `$PORT`, so
-migrations need no separate step.
+migrations need no separate step. Logs are in the Render dashboard, one
+JSON object per line.
 
 To deploy your own copy:
 
@@ -146,6 +203,7 @@ To deploy your own copy:
 | `ANTHROPIC_API_KEY` | A key used only for this deployment |
 | `MAX_EXTRACTIONS_PER_DAY` | Optional, default `20` |
 | `PROMPT_VERSION`, `LLM_MODEL`, `MAX_EXTRACTION_RETRIES`, `LLM_TIMEOUT_SECONDS` | Optional, defaults as in `.env.example` |
+| `LLM_MAX_RETRIES`, `LLM_BACKOFF_BASE_SECONDS`, `LLM_BACKOFF_MAX_SECONDS` | Optional, defaults as in `.env.example` |
 
 Why it is set up this way:
 
